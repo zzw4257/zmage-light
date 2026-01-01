@@ -1,0 +1,185 @@
+version: '3.8'
+
+services:
+  # PostgreSQL 数据库
+  img-lib-postgres:
+    image: postgres:15-alpine
+    container_name: img-lib-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-zmage}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zmage_password}
+      POSTGRES_DB: ${POSTGRES_DB:-zmage}
+    volumes:
+      - img_lib_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-zmage}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "30432:5432"
+    networks:
+      - img_lib_network
+
+  # Redis 缓存与队列
+  img-lib-redis:
+    image: redis:7-alpine
+    container_name: img-lib-redis
+    volumes:
+      - img_lib_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "30379:6379"
+    networks:
+      - img_lib_network
+
+  # Qdrant 向量数据库
+  img-lib-qdrant:
+    image: qdrant/qdrant:latest
+    container_name: img-lib-qdrant
+    volumes:
+      - img_lib_qdrant_data:/qdrant/storage
+    ports:
+      - "30333:6333"
+    networks:
+      - img_lib_network
+
+  # MinIO 对象存储
+  img-lib-minio:
+    image: minio/minio:latest
+    container_name: img-lib-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+    volumes:
+      - img_lib_minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "30900:9000"
+      - "30901:9001"
+    networks:
+      - img_lib_network
+
+  # MinIO 初始化 (创建 bucket)
+  img-lib-minio-init:
+    image: minio/mc:latest
+    container_name: img-lib-minio-init
+    depends_on:
+      img-lib-minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set myminio http://img-lib-minio:9000 ${S3_ACCESS_KEY:-minioadmin} ${S3_SECRET_KEY:-minioadmin};
+      mc mb myminio/${S3_BUCKET:-zmage} --ignore-existing;
+      mc anonymous set public myminio/${S3_BUCKET:-zmage};
+      exit 0;
+      "
+    networks:
+      - img_lib_network
+
+  # FastAPI 后端
+  img-lib-api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: img-lib-api
+    command: >
+      sh -c "python3 -m src.migrations.migrate && 
+             uvicorn src.main:app --host 0.0.0.0 --port 4257 --reload"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - DATABASE_URL=postgresql+asyncpg://zmage:zmage_password@img-lib-postgres:5432/zmage
+      - REDIS_URL=redis://img-lib-redis:6379/0
+      - QDRANT_URL=http://img-lib-qdrant:6333
+      - S3_ENDPOINT=http://img-lib-minio:9000
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-minioadmin}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-minioadmin}
+      - S3_BUCKET=${S3_BUCKET:-zmage}
+      - JWT_SECRET=${JWT_SECRET:-your_jwt_secret_key}
+    ports:
+      - "${API_PORT:-34257}:4257"
+    depends_on:
+      img-lib-postgres:
+        condition: service_healthy
+      img-lib-redis:
+        condition: service_healthy
+      img-lib-qdrant:
+        condition: service_started
+      img-lib-minio:
+        condition: service_healthy
+      img-lib-minio-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./apps/api:/app
+      - ./test_media:/app/test_media:ro
+    networks:
+      - img_lib_network
+
+  # Worker 定时任务
+  img-lib-worker:
+    build:
+      context: ./apps/worker
+      dockerfile: Dockerfile
+    container_name: img-lib-worker
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - DATABASE_URL=postgresql+asyncpg://zmage:zmage_password@img-lib-postgres:5432/zmage
+      - REDIS_URL=redis://img-lib-redis:6379/0
+      - QDRANT_URL=http://img-lib-qdrant:6333
+      - S3_ENDPOINT=http://img-lib-minio:9000
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-minioadmin}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-minioadmin}
+      - S3_BUCKET=${S3_BUCKET:-zmage}
+    depends_on:
+      img-lib-postgres:
+        condition: service_healthy
+      img-lib-redis:
+        condition: service_healthy
+      img-lib-qdrant:
+        condition: service_started
+      img-lib-minio:
+        condition: service_healthy
+      img-lib-api:
+        condition: service_started
+    volumes:
+      - ./apps/worker:/app
+      - ./test_media:/app/test_media:ro
+    networks:
+      - img_lib_network
+
+  # Next.js 前端
+  img-lib-web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=http://img-lib-api:4257
+    container_name: img-lib-web
+    environment:
+      - NEXT_PUBLIC_API_URL=http://img-lib-api:4257
+      - NEXT_PUBLIC_APP_NAME=Zmage
+    ports:
+      - "${WEB_PORT:-32333}:2333"
+    depends_on:
+      - img-lib-api
+    networks:
+      - img_lib_network
+
+volumes:
+  img_lib_postgres_data:
+  img_lib_redis_data:
+  img_lib_qdrant_data:
+  img_lib_minio_data:
+
+networks:
+  img_lib_network:
+    driver: bridge
