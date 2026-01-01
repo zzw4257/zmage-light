@@ -1,0 +1,3 @@
+"""
+Zmage Worker
+"""
