@@ -8,8 +8,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import ARRAY
 import enum
 import secrets
+from typing import TYPE_CHECKING
 
 from src.models.database import Base
+
+if TYPE_CHECKING:
+    from src.models.user import User
 
 
 class AlbumType(str, enum.Enum):
@@ -65,7 +69,11 @@ class Album(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True) # Soft delete
     
+    # 所有者
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    
     # 关系
+    user: Mapped["User"] = relationship("User")
     assets: Mapped[List["Asset"]] = relationship("Asset", secondary=album_assets, backref="albums")
     cover_asset: Mapped[Optional["Asset"]] = relationship("Asset", foreign_keys=[cover_asset_id])
 
@@ -98,7 +106,11 @@ class Collection(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
+    # 所有者
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    
     # 关系
+    user: Mapped["User"] = relationship("User")
     assets: Mapped[List["Asset"]] = relationship("Asset", secondary=collection_assets, backref="collections")
     shares: Mapped[List["Share"]] = relationship("Share", back_populates="collection", cascade="all, delete-orphan")
 
@@ -138,7 +150,11 @@ class Share(Base):
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     
+    # 所有者
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    
     # 关系
+    user: Mapped["User"] = relationship("User")
     asset: Mapped[Optional["Asset"]] = relationship("Asset", foreign_keys=[asset_id])
     collection: Mapped[Optional["Collection"]] = relationship("Collection", back_populates="shares")
 
@@ -174,7 +190,11 @@ class Portal(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
+    # 所有者
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    
     # 关系
+    user: Mapped["User"] = relationship("User")
     collection: Mapped[Optional["Collection"]] = relationship("Collection")
 
 
@@ -201,3 +221,9 @@ class DownloadPreset(Base):
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    
+    # 所有者
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    
+    # 关系
+    user: Mapped["User"] = relationship("User")

@@ -12,16 +12,17 @@ import { ViewModeSelector, type ViewMode } from "@/components/asset/view-mode-se
 import { AssetListView } from "@/components/asset/asset-list-view";
 import { AssetWaterfall } from "@/components/asset/asset-waterfall";
 import { UploadModal } from "@/components/asset/upload-modal";
-import { BatchActions } from "@/components/asset/batch-actions";
 import { ShareModal } from "@/components/share/share-modal";
 import { SelectionToolbar } from "@/components/asset/selection-toolbar";
 import { AddToAlbumModal } from "@/components/asset/add-to-album-modal";
+import { BatchTagModal } from "@/components/asset/batch-tag-modal";
 import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "@/components/ui/modal";
 import { Badge } from "@/components/ui/badge";
 import { FeaturedCarousel } from "@/components/asset/featured-carousel";
 import { AIChatDrawer } from "@/components/asset/ai-chat-drawer";
-import { assetsApi, vaultApi, type Asset } from "@/lib/api";
+import { ProcessingStatus } from "@/components/asset/processing-status";
+import { assetsApi, downloadsApi, vaultApi, type Asset } from "@/lib/api";
 import { useAppStore } from "@/store";
 import { cn, getAssetTypeLabel } from "@/lib/utils";
 import toast from "react-hot-toast";
@@ -47,6 +48,7 @@ function HomeContent() {
   const [shareAsset, setShareAsset] = useState<Asset | null>(null);
   const [deleteAsset, setDeleteAsset] = useState<Asset | null>(null);
   const [showAddToAlbum, setShowAddToAlbum] = useState(false);
+  const [showBatchTag, setShowBatchTag] = useState(false);
   const [page, setPage] = useState(1);
 
   // URL 参数
@@ -55,7 +57,7 @@ function HomeContent() {
     ? parseInt(searchParams.get("folder")!)
     : undefined;
 
-  // 获取资产列表
+  // 获取资产列表 (优化: 减少初始 page_size, 增加 staleTime)
   const { data, isLoading } = useQuery({
     queryKey: ["assets", { page, assetType, folderId, searchQuery, aiSearchEnabled }],
     queryFn: async () => {
@@ -66,19 +68,20 @@ function HomeContent() {
           asset_types: assetType ? [assetType] : undefined,
           folder_id: folderId,
           page,
-          page_size: 50,
+          page_size: 24,
         });
         return response.data;
       }
       const response = await assetsApi.list({
         page,
-        page_size: 50,
+        page_size: 24,
         asset_type: assetType,
         folder_id: folderId,
         status: "ready",
       });
       return response.data;
     },
+    staleTime: 30000, // 30 秒内不重新请求
   });
 
   // 删除资产
@@ -96,17 +99,28 @@ function HomeContent() {
 
   // 批量删除
   const batchDeleteMutation = useMutation({
-    mutationFn: async (ids: number[]) => {
-      await Promise.all(ids.map((id) => assetsApi.delete(id)));
-    },
+    mutationFn: (ids: number[]) => assetsApi.batchDelete(ids),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["assets"] });
-      toast.success("批量删除成功");
+      toast.success("已移至回收站");
       clearSelection();
       setShowConfirmDelete(false);
     },
     onError: () => {
-      toast.error("删除失败");
+      toast.error("操作失败");
+    },
+  });
+
+  // 批量恢复
+  const batchRestoreMutation = useMutation({
+    mutationFn: (ids: number[]) => assetsApi.batchRestore(ids),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["assets"] });
+      toast.success("已恢复资产");
+      clearSelection();
+    },
+    onError: () => {
+      toast.error("操作失败");
     },
   });
 
@@ -318,14 +332,7 @@ function HomeContent() {
         title={shareAsset?.title || shareAsset?.original_filename}
       />
 
-      {/* 批量操作栏 */}
-      <BatchActions
-        onDelete={() => {
-          if (selectedAssets.length > 0) {
-            setShowConfirmDelete(true);
-          }
-        }}
-      />
+      {/* 批量操作确认弹窗在下方通过 SelectionToolbar 触发 */}
 
       {selectedAssets.length > 0 && (
         <ConfirmModal
@@ -360,12 +367,24 @@ function HomeContent() {
         }}
         onAddToAlbum={() => setShowAddToAlbum(true)}
         onBatchDownload={() => {
-          toast.success(`正在下载 ${selectedAssets.length} 个资产...`);
+          // 触发批量下载
+          downloadsApi.downloadBatch(selectedAssets).then((response: any) => {
+            const url = window.URL.createObjectURL(new Blob([response.data]));
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', 'assets.zip');
+            document.body.appendChild(link);
+            link.click();
+            toast.success("开始批量下载");
+          }).catch(() => toast.error("下载失败"));
         }}
-        onBatchTag={() => {
-          toast.loading("批量标签功能即将推出");
-        }}
-        onMoveToVault={() => batchMoveToVaultMutation.mutate(selectedAssets)}
+        onBatchTag={() => setShowBatchTag(true)}
+      />
+
+      <BatchTagModal
+        open={showBatchTag}
+        onClose={() => setShowBatchTag(false)}
+        assetIds={selectedAssets}
       />
 
       {/* Add to Album Modal */}
@@ -374,6 +393,9 @@ function HomeContent() {
         onClose={() => setShowAddToAlbum(false)}
         assetIds={selectedAssets}
       />
+
+      {/* Processing Status Widget */}
+      <ProcessingStatus />
     </div>
   );
 }

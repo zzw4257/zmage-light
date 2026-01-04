@@ -2,6 +2,7 @@
 MinIO 存储服务
 """
 import io
+import os
 import hashlib
 from typing import Optional, BinaryIO
 from datetime import timedelta
@@ -139,6 +140,44 @@ class StorageService:
             output = io.BytesIO()
             img.save(output, format="JPEG", quality=quality, optimize=True)
             return output.getvalue()
+            
+        return await run_in_threadpool(_generate)
+    
+    async def generate_video_thumbnail(
+        self,
+        video_data: bytes,
+        max_size: tuple = (400, 400),
+    ) -> bytes:
+        """从视频生成缩略图"""
+        def _generate():
+            import cv2
+            # 将字节数据写入临时文件（部分 OpenCV 版本不支持直接从字节流读取视频）
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+                tmp.write(video_data)
+                tmp_path = tmp.name
+                
+            try:
+                cap = cv2.VideoCapture(tmp_path)
+                success, frame = cap.read()
+                if not success:
+                    # 尝试跳到第 1 秒，有些视频开头是黑屏
+                    cap.set(cv2.CAP_PROP_POS_MSEC, 1000)
+                    success, frame = cap.read()
+                
+                if success:
+                    # 转换颜色空间 BGR -> RGB
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    img = Image.fromarray(frame)
+                    img.thumbnail(max_size, Image.Resampling.LANCZOS)
+                    output = io.BytesIO()
+                    img.save(output, format="JPEG", quality=85, optimize=True)
+                    return output.getvalue()
+                return b""
+            finally:
+                cap.release()
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
             
         return await run_in_threadpool(_generate)
     

@@ -69,10 +69,19 @@ class Asset(Base):
     
     # 状态
     status: Mapped[AssetStatus] = mapped_column(SQLEnum(AssetStatus, native_enum=False), default=AssetStatus.PENDING)
+    processing_step: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)  # thumbnail, metadata, ai_analysis, vector, completed
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     
     # 组织
     folder_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("folders.id"), nullable=True)
+    
+    # 所有者（多用户支持）
+    user_id: Mapped[int] = mapped_column(
+        Integer, 
+        ForeignKey("users.id", ondelete="CASCADE"), 
+        nullable=False,
+        index=True
+    )
     
     # 向量 ID (Qdrant)
     vector_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -87,6 +96,7 @@ class Asset(Base):
     
     # 关系
     folder: Mapped[Optional["Folder"]] = relationship("Folder", back_populates="assets")
+    user: Mapped["User"] = relationship("User", back_populates="assets")
     versions: Mapped[List["AssetVersion"]] = relationship("AssetVersion", back_populates="asset", cascade="all, delete-orphan")
 
 
@@ -100,6 +110,7 @@ class AssetVersion(Base):
     file_path: Mapped[str] = mapped_column(String(512), nullable=False)
     file_size: Mapped[int] = mapped_column(Integer, nullable=False)
     file_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    parameters: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # 编辑参数
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     
@@ -119,7 +130,11 @@ class Folder(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
+    # 所有者
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    
     # 关系
+    user: Mapped["User"] = relationship("User")
     assets: Mapped[List["Asset"]] = relationship("Asset", back_populates="folder")
     children: Mapped[List["Folder"]] = relationship("Folder", back_populates="parent", cascade="all, delete-orphan")
     parent: Mapped[Optional["Folder"]] = relationship("Folder", back_populates="children", remote_side=[id])
@@ -138,3 +153,9 @@ class CustomField(Base):
     order: Mapped[int] = mapped_column(Integer, default=0)
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    
+    # 所有者
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    
+    # 关系
+    user: Mapped["User"] = relationship("User")

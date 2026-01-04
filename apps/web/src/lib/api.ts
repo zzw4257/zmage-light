@@ -84,6 +84,14 @@ export interface Asset {
   thumbnail_url: string | null;
 }
 
+export interface ProcessingAsset {
+  id: number;
+  filename: string;
+  status: "pending" | "processing";
+  processing_step: string | null;
+  created_at: string | null;
+}
+
 export interface AssetListResponse {
   items: Asset[];
   total: number;
@@ -184,6 +192,40 @@ export interface SystemStats {
   recent_uploads: number;
 }
 
+export interface BatchOperationResult {
+  total: number;
+  success: number;
+  failed: number;
+  failed_ids: number[];
+  message: string;
+}
+
+export interface BatchUpdateRequest {
+  asset_ids: number[];
+  title?: string;
+  description?: string;
+  tags?: string[];
+  add_tags?: string[];
+  remove_tags?: string[];
+  folder_id?: number;
+  custom_fields?: Record<string, any>;
+}
+
+export interface BatchMoveRequest {
+  asset_ids: number[];
+  folder_id: number | null;
+}
+
+export interface AssetEdit {
+  crop?: { x: number; y: number; width: number; height: number };
+  brightness?: number;
+  contrast?: number;
+  saturation?: number;
+  sharpness?: number;
+  history?: Array<{ type: string; params: any }>;
+  save_as_new?: boolean;
+}
+
 // API 方法
 export const assetsApi = {
   list: (params?: {
@@ -198,6 +240,8 @@ export const assetsApi = {
 
   update: (id: number, data: Partial<Asset>) =>
     api.put<Asset>(`/assets/${id}`, data),
+
+  edit: (id: number, data: AssetEdit) => api.post<Asset>(`/assets/${id}/edit`, data),
 
   delete: (id: number, permanent: boolean = false) => api.delete(`/assets/${id}`, { params: { permanent } }),
 
@@ -258,6 +302,8 @@ export const assetsApi = {
     });
   },
 
+  listProcessing: () => api.get<ProcessingAsset[]>("/assets/processing"),
+
   uploadToPortal: (code: string, file: File) => {
     const formData = new FormData();
     formData.append("file", file);
@@ -267,15 +313,21 @@ export const assetsApi = {
     });
   },
 
-  edit: (id: number, data: {
-    crop?: { x: number; y: number; width: number; height: number };
-    brightness?: number;
-    contrast?: number;
-    saturation?: number;
-    sharpness?: number;
-  }) => api.post<Asset>(`/assets/${id}/edit`, data),
 
   getMapAssets: () => api.get<Asset[]>("/assets/map"),
+
+  // 批量操作
+  batchDelete: (assetIds: number[]) =>
+    api.post<BatchOperationResult>("/assets/batch/delete", { asset_ids: assetIds }),
+
+  batchUpdate: (data: BatchUpdateRequest) =>
+    api.post<BatchOperationResult>("/assets/batch/update", data),
+
+  batchMove: (data: BatchMoveRequest) =>
+    api.post<BatchOperationResult>("/assets/batch/move", data),
+
+  batchRestore: (assetIds: number[]) =>
+    api.post<BatchOperationResult>("/assets/batch/restore", { asset_ids: assetIds }),
 };
 
 export const foldersApi = {
@@ -300,6 +352,8 @@ export const albumsApi = {
     description?: string;
     asset_ids?: number[];
     cover_asset_id?: number;
+    album_type?: "manual" | "smart";
+    smart_rules?: Record<string, unknown>;
   }) => api.post<Album>("/albums", data),
 
   update: (id: number, data: Partial<Album>) =>
@@ -315,6 +369,30 @@ export const albumsApi = {
 
   removeAssets: (id: number, assetIds: number[]) =>
     api.delete(`/albums/${id}/assets`, { data: assetIds }),
+
+  getPreview: (id: number, limit: number = 4) =>
+    api.get<{ album_id: number; preview_urls: string[]; assets: Asset[] }>(
+      `/albums/${id}/preview`,
+      { params: { limit } }
+    ),
+
+  getStats: (id: number) =>
+    api.get<{
+      asset_count: number;
+      total_size: number;
+      date_range: { start: string | null; end: string | null } | null;
+    }>(`/albums/${id}/stats`),
+
+  autoCover: (id: number) =>
+    api.post<{ cover_asset_id: number; message: string }>(`/albums/${id}/auto-cover`),
+
+  getSmartPreview: (id: number) =>
+    api.get<{ album_id: number; matched_count: number; assets: Asset[] }>(
+      `/albums/${id}/smart-preview`
+    ),
+
+  download: (id: number) =>
+    api.get(`/albums/${id}/download`, { responseType: "blob" }),
 
   getSuggestions: () => api.get<Album[]>("/albums/suggestions"),
 
@@ -520,7 +598,7 @@ export const vaultApi = {
     headers: { "X-Vault-Token": token }
   }),
   moveIn: (id: number) => api.post(`/vault/assets/${id}/move-in`),
-  status: () => api.post<{ has_pin: boolean }>("/vault/check-status"),
+  status: () => api.get<{ has_pin: boolean }>("/vault/check-status"),
 };
 
 // 获取存储文件 URL

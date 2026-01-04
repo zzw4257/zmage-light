@@ -19,6 +19,8 @@ class AlbumCreate(AlbumBase):
     """创建相册请求"""
     asset_ids: List[int] = Field(default_factory=list)
     cover_asset_id: Optional[int] = None
+    album_type: Optional[AlbumType] = None  # 默认为 manual
+    smart_rules: Optional[Dict[str, Any]] = None  # 智能相册规则
 
 
 class AlbumUpdate(BaseModel):

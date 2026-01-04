@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import Image from "next/image";
 import { motion } from "framer-motion";
 import { Check, Play, FileText, MoreHorizontal, Download, Share2, Trash2, Edit, Lock } from "lucide-react";
@@ -35,8 +35,10 @@ export function AssetCard({
   onMoveToVault,
   actionRenderer,
 }: AssetCardProps) {
-  const { batchMode } = useAppStore();
+  const { batchMode, setBatchMode } = useAppStore();
   const [imageError, setImageError] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
 
   const thumbnailUrl = asset.thumbnail_url || getStorageUrl(asset.thumbnail_path);
   const isImage = asset.asset_type === "image";
@@ -55,6 +57,24 @@ export function AssetCard({
     downloadsApi.downloadAsset(asset.id);
   };
 
+  const handleTouchStart = () => {
+    longPressTimer.current = setTimeout(() => {
+      if (!batchMode) {
+        setBatchMode(true);
+        if (onSelect) onSelect();
+        // Trigger generic haptic feedback if available (browser specific)
+        if (navigator.vibrate) navigator.vibrate(50);
+      }
+    }, 600);
+  };
+
+  const handleTouchEnd = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+
   return (
     <motion.div
       layout
@@ -67,10 +87,15 @@ export function AssetCard({
       exit={{ opacity: 0, scale: 0.9 }}
       transition={{ duration: 0.2, ease: "easeOut" }}
       className={cn(
-        "asset-card group relative glass rounded-2xl overflow-hidden cursor-pointer transition-shadow",
+        "asset-card group relative glass rounded-2xl overflow-hidden cursor-pointer transition-shadow select-none",
         selected && "ring-2 ring-[var(--primary)] shadow-lg"
       )}
       onClick={handleClick}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onTouchMove={handleTouchEnd} // Cancel on scroll
     >
       {/* 缩略图 */}
       <div className="relative aspect-square bg-[var(--muted)]">
@@ -82,6 +107,7 @@ export function AssetCard({
             className="object-cover"
             sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
             onError={() => setImageError(true)}
+            draggable={false}
           />
         ) : (
           <div className="absolute inset-0 flex items-center justify-center">
@@ -100,23 +126,24 @@ export function AssetCard({
           </div>
         )}
 
-        {/* 选择框 */}
-        {(batchMode || selected) && (
-          <div
-            className={cn(
-              "absolute top-2 left-2 w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-colors",
-              selected
-                ? "bg-[var(--primary)] border-[var(--primary)]"
-                : "bg-white/80 border-[var(--border)]"
-            )}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect?.();
-            }}
-          >
-            {selected && <Check className="h-4 w-4 text-white" />}
-          </div>
-        )}
+        {/* 选择框 - 始终渲染但控制显隐 */}
+        <div
+          className={cn(
+            "absolute top-2 left-2 w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all duration-200 z-10",
+            selected
+              ? "bg-[var(--primary)] border-[var(--primary)] opacity-100"
+              : "bg-white/80 border-[var(--border)] hover:border-[var(--primary)]",
+            !selected && !batchMode && !isHovered && "opacity-0 scale-90",
+            !selected && (batchMode || isHovered) && "opacity-100 scale-100"
+          )}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!batchMode) setBatchMode(true);
+            onSelect?.();
+          }}
+        >
+          {selected && <Check className="h-4 w-4 text-white" />}
+        </div>
 
         {/* 状态标签 */}
         {!isReady && (
@@ -131,11 +158,17 @@ export function AssetCard({
         )}
 
         {/* 悬停操作 */}
-        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors">
-          {actionRenderer ? (
-            actionRenderer(asset)
+        <div className={cn(
+          "absolute inset-0 bg-black/0 transition-colors pointer-events-none",
+          isHovered && "bg-black/20"
+        )}>
+          {/* 这里只在非批量模式下显示操作按钮，以免遮挡选择 */}
+          {!batchMode && (actionRenderer ? (
+            <div className="pointer-events-auto contents">
+              {actionRenderer(asset)}
+            </div>
           ) : (
-            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-auto">
               <Dropdown
                 trigger={
                   <Button
@@ -185,7 +218,7 @@ export function AssetCard({
                 </DropdownItem>
               </Dropdown>
             </div>
-          )}
+          ))}
         </div>
       </div>
 

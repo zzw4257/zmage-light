@@ -322,7 +322,7 @@ async def call_tool(
                 folder_id=args.get("folder_id"),
                 tags=args.get("tags")
             )
-            assets, total = await asset_service.search_assets(db, search_req)
+            assets, total = await asset_service.search_assets(db, search_req, current_user_id=current_user.id)
             items = [asset_to_response(a) for a in assets]
             return MCPCallResponse(content=[{"type": "text", "text": f"找到 {total} 个匹配项"}, {"type": "json", "data": items}])
 
@@ -337,6 +337,7 @@ async def call_tool(
             
             result = await db.execute(
                 select(Asset)
+                .filter(Asset.user_id == current_user.id)
                 .filter(Asset.deleted_at.is_(None), Asset.is_private.is_(False))
                 .limit(page_size)
             )
@@ -346,13 +347,17 @@ async def call_tool(
 
         elif name == "get_asset_details":
             asset_id = args.get("asset_id")
-            asset = await asset_service.get_asset(db, asset_id)
-            if not asset:
+            asset = await db.get(Asset, asset_id)
+            if not asset or asset.user_id != current_user.id:
                 return MCPCallResponse(content=[{"type": "text", "text": "资产不存在"}], is_error=True)
             return MCPCallResponse(content=[{"type": "json", "data": asset_to_response(asset)}])
 
         elif name == "update_asset":
             asset_id = args.get("asset_id")
+            asset = await db.get(Asset, asset_id)
+            if not asset or asset.user_id != current_user.id:
+                return MCPCallResponse(content=[{"type": "text", "text": "资产不存在"}], is_error=True)
+            
             from src.schemas.asset import AssetUpdate
             update_data = AssetUpdate(
                 title=args.get("title"),
@@ -364,15 +369,23 @@ async def call_tool(
 
         elif name == "delete_asset":
             asset_id = args.get("asset_id")
+            asset = await db.get(Asset, asset_id)
+            if not asset or asset.user_id != current_user.id:
+                return MCPCallResponse(content=[{"type": "text", "text": "资产不存在"}], is_error=True)
+                
             permanent = args.get("permanent", False)
-            await asset_service.delete_asset(db, asset_id, permanent=permanent)
+            await asset_service.delete_asset(db, asset, permanent=permanent)
             return MCPCallResponse(content=[{"type": "text", "text": "已移至回收站" if not permanent else "已永久删除"}])
 
         elif name == "find_similar_assets":
             asset_id = args.get("asset_id")
+            asset = await db.get(Asset, asset_id)
+            if not asset or asset.user_id != current_user.id:
+                return MCPCallResponse(content=[{"type": "text", "text": "资产不存在"}], is_error=True)
+                
             limit = args.get("limit", 10)
-            similar = await asset_service.get_similar_assets(db, asset_id, limit)
-            items = [{"asset": asset_to_response(s["asset"]), "similarity": s["similarity"]} for s in similar]
+            similar = await asset_service.get_similar_assets(db, asset_id, user_id=current_user.id, limit=limit)
+            items = [{"asset": asset_to_response(s[0]), "similarity": s[1]} for s in similar if s[0].user_id == current_user.id]
             return MCPCallResponse(content=[{"type": "text", "text": f"找到 {len(items)} 个相似资产"}, {"type": "json", "data": items}])
 
         # === 相册管理 ===
@@ -380,7 +393,7 @@ async def call_tool(
             from src.models import album_assets
             from src.schemas.album import AlbumType, AlbumStatus
             
-            query = select(Album)
+            query = select(Album).where(Album.user_id == current_user.id)
             album_type_arg = args.get("album_type")
             if album_type_arg:
                 query = query.where(Album.album_type == album_type_arg)
@@ -409,7 +422,7 @@ async def call_tool(
             from src.models import album_assets
             album_id = args.get("album_id")
             album = await db.get(Album, album_id)
-            if not album:
+            if not album or album.user_id != current_user.id:
                 return MCPCallResponse(content=[{"type": "text", "text": "相册不存在"}], is_error=True)
             
             # 获取相册中的资产
@@ -438,7 +451,8 @@ async def call_tool(
                 name=name_val,
                 description=description,
                 album_type="manual",
-                status="accepted"
+                status="accepted",
+                user_id=current_user.id
             )
             db.add(album)
             await db.commit()
@@ -456,7 +470,17 @@ async def call_tool(
         elif name == "add_to_album":
             from src.services.album import album_service
             album_id = args.get("album_id")
+            album = await db.get(Album, album_id)
+            if not album or album.user_id != current_user.id:
+                return MCPCallResponse(content=[{"type": "text", "text": "相册不存在"}], is_error=True)
+            
             asset_ids = args.get("asset_ids", [])
+            # 校验资产所有权
+            for aid in asset_ids:
+                asset = await db.get(Asset, aid)
+                if not asset or asset.user_id != current_user.id:
+                    return MCPCallResponse(content=[{"type": "text", "text": f"资产 {aid} 不存在或无权限"}], is_error=True)
+
             await album_service.add_assets_to_album(db, album_id, asset_ids)
             return MCPCallResponse(content=[{"type": "text", "text": f"已将 {len(asset_ids)} 个资产添加到相册"}])
 
@@ -465,6 +489,10 @@ async def call_tool(
             from sqlalchemy import delete
             
             album_id = args.get("album_id")
+            album = await db.get(Album, album_id)
+            if not album or album.user_id != current_user.id:
+                return MCPCallResponse(content=[{"type": "text", "text": "相册不存在"}], is_error=True)
+            
             asset_ids = args.get("asset_ids", [])
             for asset_id in asset_ids:
                 await db.execute(
@@ -494,7 +522,7 @@ async def call_tool(
         # === 集合管理 ===
         elif name == "list_collections":
             from src.models import Collection
-            result = await db.execute(select(Collection))
+            result = await db.execute(select(Collection).where(Collection.user_id == current_user.id))
             collections = result.scalars().all()
             collection_list = [{"id": c.id, "name": c.name, "description": c.description} for c in collections]
             return MCPCallResponse(content=[{"type": "text", "text": f"找到 {len(collection_list)} 个集合"}, {"type": "json", "data": collection_list}])
@@ -507,7 +535,7 @@ async def call_tool(
             description = args.get("description")
             asset_ids = args.get("asset_ids", [])
             
-            collection = Collection(name=name_val, description=description)
+            collection = Collection(name=name_val, description=description, user_id=current_user.id)
             db.add(collection)
             await db.commit()
             await db.refresh(collection)
@@ -526,8 +554,16 @@ async def call_tool(
             from sqlalchemy import insert
             
             collection_id = args.get("collection_id")
+            collection = await db.get(Collection, collection_id)
+            if not collection or collection.user_id != current_user.id:
+                return MCPCallResponse(content=[{"type": "text", "text": "集合不存在"}], is_error=True)
+                
             asset_ids = args.get("asset_ids", [])
             for asset_id in asset_ids:
+                # 校验资产
+                asset = await db.get(Asset, asset_id)
+                if not asset or asset.user_id != current_user.id:
+                    continue
                 await db.execute(
                     insert(collection_assets).values(collection_id=collection_id, asset_id=asset_id)
                 )
@@ -536,7 +572,7 @@ async def call_tool(
 
         # === 文件夹管理 ===
         elif name == "list_folders":
-            result = await db.execute(select(Folder))
+            result = await db.execute(select(Folder).where(Folder.user_id == current_user.id))
             folders = result.scalars().all()
             folder_data = [{"id": f.id, "name": f.name, "path": f.path, "asset_count": f.asset_count} for f in folders]
             return MCPCallResponse(content=[{"type": "json", "data": folder_data}])
@@ -544,7 +580,7 @@ async def call_tool(
         elif name == "create_folder":
             name_val = args.get("name")
             parent_id = args.get("parent_id")
-            folder = Folder(name=name_val, parent_id=parent_id, path=f"/{name_val}")
+            folder = Folder(name=name_val, parent_id=parent_id, path=f"/{name_val}", user_id=current_user.id)
             db.add(folder)
             await db.commit()
             return MCPCallResponse(content=[{"type": "text", "text": f"文件夹 '{name_val}' 创建成功"}])
@@ -555,6 +591,7 @@ async def call_tool(
             limit = args.get("limit", 20)
             result = await db.execute(
                 select(Asset)
+                .filter(Asset.user_id == current_user.id)
                 .filter(Asset.deleted_at.isnot(None))
                 .limit(limit)
             )
@@ -565,14 +602,14 @@ async def call_tool(
         elif name == "restore_asset":
             asset_id = args.get("asset_id")
             asset = await db.get(Asset, asset_id)
-            if asset:
+            if asset and asset.user_id == current_user.id:
                 asset.deleted_at = None
                 await db.commit()
                 return MCPCallResponse(content=[{"type": "text", "text": "资产已恢复"}])
             return MCPCallResponse(content=[{"type": "text", "text": "资产不存在"}], is_error=True)
 
         elif name == "empty_trash":
-            result = await db.execute(select(Asset).filter(Asset.deleted_at.isnot(None)))
+            result = await db.execute(select(Asset).filter(Asset.user_id == current_user.id, Asset.deleted_at.isnot(None)))
             deleted_assets = result.scalars().all()
             for asset in deleted_assets:
                 await db.delete(asset)
@@ -583,7 +620,7 @@ async def call_tool(
         elif name == "move_to_vault":
             asset_id = args.get("asset_id")
             asset = await db.get(Asset, asset_id)
-            if asset:
+            if asset and asset.user_id == current_user.id:
                 asset.is_private = True
                 await db.commit()
                 return MCPCallResponse(content=[{"type": "text", "text": "资产已移入保险库"}])
@@ -599,19 +636,29 @@ async def call_tool(
                 password=args.get("password"),
                 expires_in_days=args.get("expires_in_days")
             )
-            share = await share_service.create_share(db, share_data)
+            # 校验所有权
+            if share_data.asset_id:
+                asset = await db.get(Asset, share_data.asset_id)
+                if not asset or asset.user_id != current_user.id:
+                    return MCPCallResponse(content=[{"type": "text", "text": "资产不存在"}], is_error=True)
+            if share_data.collection_id:
+                coll = await db.get(Collection, share_data.collection_id)
+                if not coll or coll.user_id != current_user.id:
+                    return MCPCallResponse(content=[{"type": "text", "text": "集合不存在"}], is_error=True)
+
+            share = await share_service.create_share(db, share_data, user_id=current_user.id)
             return MCPCallResponse(content=[{"type": "text", "text": f"分享链接已创建: {share.share_url}"}])
 
         elif name == "list_shares":
-            result = await db.execute(select(Share))
+            result = await db.execute(select(Share).where(Share.user_id == current_user.id))
             shares = result.scalars().all()
             share_data = [{"id": s.id, "share_code": s.share_code, "created_at": str(s.created_at)} for s in shares]
             return MCPCallResponse(content=[{"type": "json", "data": share_data}])
 
         # === 系统信息 ===
         elif name == "get_system_stats":
-            total_assets = await db.scalar(select(func.count(Asset.id)).filter(Asset.deleted_at.is_(None)))
-            total_albums = await db.scalar(select(func.count(Album.id)))
+            total_assets = await db.scalar(select(func.count(Asset.id)).filter(Asset.user_id == current_user.id, Asset.deleted_at.is_(None)))
+            total_albums = await db.scalar(select(func.count(Album.id)).where(Album.user_id == current_user.id))
             stats = {
                 "total_assets": total_assets,
                 "total_albums": total_albums,
@@ -642,7 +689,7 @@ async def mcp_search_old(
 ):
     """向下兼容的旧接口"""
     request = AssetSearchRequest(query=query, ai_search=True, page=page, page_size=page_size)
-    assets, total = await asset_service.search_assets(db, request)
+    assets, total = await asset_service.search_assets(db, request, current_user_id=current_user.id)
     return {
         "items": [asset_to_response(a) for a in assets],
         "total": total,

@@ -25,6 +25,8 @@ google-genai==0.4.0
 # 图像处理
 pillow>=10.2.0
 python-magic==0.4.27
+opencv-python-headless==4.9.0.80
+pillow-heif==0.15.0
 
 # 认证
 python-jose[cryptography]==3.3.0

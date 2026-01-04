@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete
 
 from datetime import datetime
-from src.models import get_db, Asset, AssetStatus, AssetType, Folder, CustomField
+from src.models import get_db, Asset, AssetVersion, AssetStatus, AssetType, Folder, CustomField
 from src.services.storage import calculate_file_hash
 from src.schemas import (
     AssetResponse, AssetListResponse, AssetUpdate, AssetSearchRequest,
@@ -17,6 +17,8 @@ from src.schemas import (
 )
 from src.services import asset_service, storage_service, album_service
 
+from src.routers.auth import get_current_user
+from src.models.user import User
 router = APIRouter(prefix="/assets", tags=["资产管理"])
 
 
@@ -35,6 +37,7 @@ async def upload_asset(
     file: UploadFile = File(...),
     folder_path: Optional[str] = Form(None),
     album_id: Optional[int] = Form(None),
+    current_user: User = Depends(get_current_user),  # 新增认证
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -51,6 +54,7 @@ async def upload_asset(
             db=db,
             file_data=file_data,
             filename=file.filename,
+            user_id=current_user.id,  # 新增
             folder_path=folder_path,
         )
         
@@ -81,6 +85,7 @@ async def upload_assets_batch(
     background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(...),
     folder_path: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -114,6 +119,7 @@ async def upload_assets_batch(
                 db=db,
                 file_data=file_data,
                 filename=filename,
+                user_id=current_user.id,
                 folder_path=actual_folder,
             )
             
@@ -166,6 +172,7 @@ async def process_asset_background(asset_id: int):
 @router.post("/search", response_model=AssetListResponse, summary="搜索资产")
 async def search_assets(
     request: AssetSearchRequest,
+    current_user: User = Depends(get_current_user),  # 新增认证
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -174,7 +181,11 @@ async def search_assets(
     - 支持关键词搜索和 AI 语义搜索
     - 支持多种过滤条件
     """
-    assets, total = await asset_service.search_assets(db, request)
+    assets, total = await asset_service.search_assets(
+        db, 
+        request,
+        current_user.id,  # 新增
+    )
     
     return AssetListResponse(
         items=[asset_to_response(a) for a in assets],
@@ -185,6 +196,33 @@ async def search_assets(
     )
 
 
+@router.get("/processing", summary="获取正在处理的资产列表")
+async def list_processing_assets(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取当前用户正在处理中的资产，用于显示实时进度"""
+    query = select(Asset).where(
+        Asset.user_id == current_user.id,
+        Asset.status.in_([AssetStatus.PENDING, AssetStatus.PROCESSING]),
+        Asset.deleted_at.is_(None),
+    ).order_by(Asset.created_at.desc()).limit(20)
+    
+    result = await db.execute(query)
+    assets = result.scalars().all()
+    
+    return [
+        {
+            "id": a.id,
+            "filename": a.original_filename,
+            "status": a.status.value,
+            "processing_step": a.processing_step,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        }
+        for a in assets
+    ]
+
+
 @router.get("", response_model=AssetListResponse, summary="获取资产列表")
 async def list_assets(
     page: int = Query(1, ge=1),
@@ -192,12 +230,19 @@ async def list_assets(
     asset_type: Optional[AssetType] = None,
     folder_id: Optional[int] = None,
     status: Optional[AssetStatus] = None,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取资产列表"""
     from src.utils.security import VisibilityHelper
-    query = select(Asset).where(VisibilityHelper.active_assets())
-    count_query = select(func.count(Asset.id)).where(VisibilityHelper.active_assets())
+    query = select(Asset).where(
+        Asset.user_id == current_user.id,
+        VisibilityHelper.active_assets()
+    )
+    count_query = select(func.count(Asset.id)).where(
+        Asset.user_id == current_user.id,
+        VisibilityHelper.active_assets()
+    )
     
     if asset_type:
         query = query.where(Asset.asset_type == asset_type)
@@ -231,11 +276,13 @@ async def list_assets(
 
 @router.get("/map", response_model=List[AssetResponse], summary="获取有位置信息的资产列表")
 async def list_map_assets(
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取所有具有经纬度信息的资产，用于地图展示"""
     from src.utils.security import VisibilityHelper
     query = select(Asset).where(
+        Asset.user_id == current_user.id,
         Asset.latitude.isnot(None),
         Asset.longitude.isnot(None),
         Asset.status == AssetStatus.READY,
@@ -250,11 +297,12 @@ async def list_map_assets(
 @router.get("/{asset_id}", response_model=AssetResponse, summary="获取资产详情")
 async def get_asset(
     asset_id: int,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取单个资产详情"""
     asset = await db.get(Asset, asset_id)
-    if not asset or asset.deleted_at is not None:
+    if not asset or asset.deleted_at is not None or asset.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="资产不存在")
     
     # 私密资产检查 (由调用者决定是否需要 Vault Token，但在这里我们简单过滤)
@@ -270,11 +318,12 @@ async def get_asset(
 async def update_asset(
     asset_id: int,
     data: AssetUpdate,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """更新资产信息"""
     asset = await db.get(Asset, asset_id)
-    if not asset or asset.deleted_at is not None:
+    if not asset or asset.deleted_at is not None or asset.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="资产不存在")
     
     if asset.is_private:
@@ -295,6 +344,7 @@ async def edit_asset(
     asset_id: int,
     data: AssetEdit,
     background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -306,67 +356,138 @@ async def edit_asset(
     from src.services.image_editor import image_editor_service
     
     asset = await db.get(Asset, asset_id)
-    if not asset or asset.asset_type != AssetType.IMAGE:
+    if not asset or asset.asset_type != AssetType.IMAGE or asset.user_id != current_user.id:
         raise HTTPException(status_code=400, detail="资产不存在或不是图片")
     
-    # 下载原图
-    image_data = await storage_service.download_file(asset.file_path)
+    # 构造操作参数
+    ops = data.history or []
+    if not ops:
+        if data.crop:
+            ops.append({"type": "crop", "params": data.crop})
+        
+        adjust_params = {}
+        if data.brightness != 1.0: adjust_params["brightness"] = data.brightness
+        if data.contrast != 1.0: adjust_params["contrast"] = data.contrast
+        if data.saturation != 1.0: adjust_params["saturation"] = data.saturation
+        if data.sharpness != 1.0: adjust_params["sharpness"] = data.sharpness
+        
+        if adjust_params:
+            ops.append({"type": "adjust", "params": adjust_params})
+
+    # 逻辑分叉：另存为新资产 vs 版本控制
+    if data.save_as_new:
+        # === 模式 A: 另存为新资产 (Save as Copy) ===
+        image_data = await storage_service.download_file(asset.file_path)
+        edited_data = image_editor_service.process_history(image_data, ops)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        new_filename = f"edited_{timestamp}_{asset.original_filename}"
+        new_path = f"assets/{new_filename}"
+        
+        await storage_service.upload_bytes(edited_data, new_path, "image/jpeg")
+        
+        # 缩略图
+        thumbnail_data = await storage_service.generate_thumbnail(edited_data)
+        thumbnail_path = f"thumbnails/{new_filename}"
+        await storage_service.upload_bytes(thumbnail_data, thumbnail_path, "image/jpeg")
+        
+        new_asset = Asset(
+            filename=new_filename,
+            original_filename=asset.original_filename,
+            file_path=new_path,
+            thumbnail_path=thumbnail_path,
+            file_size=len(edited_data),
+            mime_type="image/jpeg",
+            asset_type=AssetType.IMAGE,
+            file_hash=calculate_file_hash(edited_data),
+            title=f"{asset.title or asset.filename} (副本)",
+            folder_id=asset.folder_id,
+            user_id=current_user.id,
+            status=AssetStatus.PENDING,
+        )
+        db.add(new_asset)
+        await db.commit()
+        await db.refresh(new_asset)
+        
+        background_tasks.add_task(process_asset_background, new_asset.id)
+        return asset_to_response(new_asset)
     
-    # 处理图片
-    edited_data = image_editor_service.process_image(
-        image_data=image_data,
-        crop=data.crop,
-        brightness=data.brightness,
-        contrast=data.contrast,
-        saturation=data.saturation,
-        sharpness=data.sharpness,
-    )
-    
-    # 保存新文件
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    new_filename = f"edited_{timestamp}_{asset.original_filename}"
-    new_path = f"assets/{new_filename}"
-    
-    await storage_service.upload_bytes(edited_data, new_path, "image/jpeg")
-    
-    # 重新生成缩略图
-    thumbnail_data = await storage_service.generate_thumbnail(edited_data)
-    thumbnail_path = f"thumbnails/{new_filename}"
-    await storage_service.upload_bytes(thumbnail_data, thumbnail_path, "image/jpeg")
-    
-    # 创建新资产记录 (Save as New)
-    new_asset = Asset(
-        filename=new_filename,
-        original_filename=asset.original_filename,
-        file_path=new_path,
-        thumbnail_path=thumbnail_path,
-        file_size=len(edited_data),
-        mime_type="image/jpeg",
-        asset_type=AssetType.IMAGE,
-        file_hash=calculate_file_hash(edited_data),
-        width=asset.width, # 此时可能未必准确，最好重新读取，但先沿用或暂空
-        height=asset.height,
-        duration=None,
-        title=f"{asset.title or asset.filename} (副本)",
-        description=asset.description,
-        folder_id=asset.folder_id,
-        status=AssetStatus.PENDING, # 等待 AI 分析
-    )
-    
-    db.add(new_asset)
-    await db.commit()
-    await db.refresh(new_asset)
-    
-    # 异步进行 AI 分析
-    background_tasks.add_task(process_asset_background, new_asset.id)
-    
-    return asset_to_response(new_asset)
+    else:
+        # === 模式 B: 版本控制 (Professional Write-back) ===
+        # 1. 确保原始版本 (V1) 存在
+        stmt = select(AssetVersion).where(AssetVersion.asset_id == asset.id).order_by(AssetVersion.version_number)
+        result = await db.execute(stmt)
+        versions = result.scalars().all()
+        
+        if not versions:
+            # 首次编辑，将当前文件归档为 V1 (Original)
+            v1 = AssetVersion(
+                asset_id=asset.id,
+                version_number=1,
+                file_path=asset.file_path,
+                file_size=asset.file_size,
+                file_hash=asset.file_hash,
+                parameters=None, # V1 是原图
+                note="Original"
+            )
+            db.add(v1)
+            await db.commit()
+            versions = [v1]
+            
+        # 2. 获取原图数据 (始终基于 V1 编辑以实现无损)
+        original_version = versions[0]
+        image_data = await storage_service.download_file(original_version.file_path)
+        
+        # 3. 处理图片
+        edited_data = image_editor_service.process_history(image_data, ops)
+        
+        # 4. 保存新版本文件
+        next_ver = versions[-1].version_number + 1
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        ext = asset.original_filename.split('.')[-1] if '.' in asset.original_filename else "jpg"
+        new_filename = f"{asset.id}_v{next_ver}_{timestamp}.{ext}"
+        new_path = f"assets/{new_filename}"
+        
+        await storage_service.upload_bytes(edited_data, new_path, "image/jpeg")
+        
+        # 5. 更新 Asset 指向新文件
+        asset.file_path = new_path
+        asset.file_size = len(edited_data)
+        asset.file_hash = calculate_file_hash(edited_data)
+        asset.mime_type = "image/jpeg" # 强制转为 JPEG
+        # 重新生成缩略图
+        thumbnail_data = await storage_service.generate_thumbnail(edited_data)
+        thumbnail_path = f"thumbnails/{new_filename}"
+        await storage_service.upload_bytes(thumbnail_data, thumbnail_path, "image/jpeg")
+        asset.thumbnail_path = thumbnail_path
+        
+        # 6. 创建新的 Version 记录 (保存编辑参数)
+        new_version = AssetVersion(
+            asset_id=asset.id,
+            version_number=next_ver,
+            file_path=new_path,
+            file_size=len(edited_data),
+            file_hash=asset.file_hash,
+            parameters=ops, # 保存编辑参数历史
+            note=f"Edited v{next_ver}"
+        )
+        db.add(new_version)
+        
+        await db.commit()
+        await db.refresh(asset)
+        
+        # 7. 触发重新分析 (Vector, OCR etc)
+        # TODO: 也许不需要全量重新分析，但向量需要更新
+        background_tasks.add_task(process_asset_background, asset.id)
+        
+        return asset_to_response(asset)
 
 
 @router.delete("/{asset_id}", summary="删除资产 (移至回收站)")
 async def delete_asset(
     asset_id: int,
     permanent: bool = Query(False, description="是否永久删除"),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -375,7 +496,7 @@ async def delete_asset(
     - permanent=True：永久删除（不可恢复），同时删除文件
     """
     asset = await db.get(Asset, asset_id)
-    if not asset:
+    if not asset or asset.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="资产不存在")
     
     if permanent:
@@ -392,11 +513,12 @@ async def delete_asset(
 @router.post("/{asset_id}/restore", summary="从回收站恢复")
 async def restore_asset(
     asset_id: int,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """恢复已删除的资产"""
     # 需查出即使已删除的资产
-    query = select(Asset).where(Asset.id == asset_id)
+    query = select(Asset).where(Asset.id == asset_id, Asset.user_id == current_user.id)
     result = await db.execute(query)
     asset = result.scalars().first()
     
@@ -415,14 +537,15 @@ async def restore_asset(
 async def get_similar_assets(
     asset_id: int,
     limit: int = Query(10, ge=1, le=50),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取相似资产推荐"""
     asset = await db.get(Asset, asset_id)
-    if not asset:
+    if not asset or asset.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="资产不存在")
     
-    similar = await asset_service.get_similar_assets(db, asset_id, limit)
+    similar = await asset_service.get_similar_assets(db, asset_id, user_id=current_user.id, limit=limit)
     
     return [
         SimilarAssetResponse(
@@ -436,11 +559,12 @@ async def get_similar_assets(
 # 文件夹相关路由
 @router.get("/folders/tree", response_model=List[FolderTreeResponse], summary="获取文件夹树")
 async def get_folder_tree(
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取文件夹树结构"""
     result = await db.execute(
-        select(Folder).where(Folder.parent_id.is_(None)).order_by(Folder.name)
+        select(Folder).where(Folder.parent_id.is_(None), Folder.user_id == current_user.id).order_by(Folder.name)
     )
     root_folders = result.scalars().all()
     
@@ -456,7 +580,7 @@ async def get_folder_tree(
         
         # 获取子文件夹
         children_result = await db.execute(
-            select(Folder).where(Folder.parent_id == folder.id).order_by(Folder.name)
+            select(Folder).where(Folder.parent_id == folder.id, Folder.user_id == current_user.id).order_by(Folder.name)
         )
         children = children_result.scalars().all()
         
@@ -476,13 +600,14 @@ async def get_folder_tree(
 @router.post("/folders", response_model=FolderResponse, summary="创建文件夹")
 async def create_folder(
     data: FolderCreate,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """创建新文件夹"""
     # 计算路径
     if data.parent_id:
         parent = await db.get(Folder, data.parent_id)
-        if not parent:
+        if not parent or parent.user_id != current_user.id:
             raise HTTPException(status_code=404, detail="父文件夹不存在")
         path = f"{parent.path}/{data.name}"
     else:
@@ -490,7 +615,7 @@ async def create_folder(
     
     # 检查重复
     existing = await db.execute(
-        select(Folder).where(Folder.path == path)
+        select(Folder).where(Folder.path == path, Folder.user_id == current_user.id)
     )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="文件夹已存在")
@@ -499,6 +624,7 @@ async def create_folder(
         name=data.name,
         parent_id=data.parent_id,
         path=path,
+        user_id=current_user.id,
     )
     db.add(folder)
     await db.commit()
@@ -517,11 +643,12 @@ async def create_folder(
 # 自定义字段相关路由
 @router.get("/fields/list", response_model=List[CustomFieldResponse], summary="获取自定义字段列表")
 async def list_custom_fields(
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取所有自定义字段"""
     result = await db.execute(
-        select(CustomField).order_by(CustomField.order)
+        select(CustomField).where(CustomField.user_id == current_user.id).order_by(CustomField.order)
     )
     fields = result.scalars().all()
     return [CustomFieldResponse.model_validate(f) for f in fields]
@@ -530,19 +657,20 @@ async def list_custom_fields(
 @router.post("/fields", response_model=CustomFieldResponse, summary="创建自定义字段")
 async def create_custom_field(
     data: CustomFieldCreate,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """创建自定义字段"""
     # 检查重复
     existing = await db.execute(
-        select(CustomField).where(CustomField.name == data.name)
+        select(CustomField).where(CustomField.name == data.name, CustomField.user_id == current_user.id)
     )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="字段名已存在")
     
     # 获取最大排序值
     max_order = await db.execute(
-        select(func.max(CustomField.order))
+        select(func.max(CustomField.order)).where(CustomField.user_id == current_user.id)
     )
     order = (max_order.scalar() or 0) + 1
     
@@ -553,6 +681,7 @@ async def create_custom_field(
         options=data.options,
         required=data.required,
         order=order,
+        user_id=current_user.id,
     )
     db.add(field)
     await db.commit()

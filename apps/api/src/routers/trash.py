@@ -10,6 +10,8 @@ from src.models import get_db, Asset, AssetStatus
 from src.schemas import AssetListResponse, AssetResponse
 from src.routers.assets import asset_to_response
 from src.services import asset_service
+from src.routers.auth import get_current_user
+from src.models.user import User
 
 router = APIRouter(prefix="/trash", tags=["回收站"])
 
@@ -18,12 +20,21 @@ router = APIRouter(prefix="/trash", tags=["回收站"])
 async def list_trash_assets(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     from src.utils.security import VisibilityHelper
     """获取所有已删除的资产 (默认排除私密资产)"""
-    query = select(Asset).where(VisibilityHelper.trashed_assets(), Asset.is_private.is_(False))
-    count_query = select(func.count(Asset.id)).where(VisibilityHelper.trashed_assets(), Asset.is_private.is_(False))
+    query = select(Asset).where(
+        Asset.user_id == current_user.id,
+        VisibilityHelper.trashed_assets(), 
+        Asset.is_private.is_(False)
+    )
+    count_query = select(func.count(Asset.id)).where(
+        Asset.user_id == current_user.id,
+        VisibilityHelper.trashed_assets(), 
+        Asset.is_private.is_(False)
+    )
     
     # 获取总数
     total = await db.scalar(count_query)
@@ -44,11 +55,15 @@ async def list_trash_assets(
 
 @router.delete("/empty", summary="清空回收站")
 async def empty_trash(
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """清空回收站（永久删除所有已删除资产）"""
     from src.utils.security import VisibilityHelper
-    query = select(Asset).where(VisibilityHelper.trashed_assets())
+    query = select(Asset).where(
+        Asset.user_id == current_user.id,
+        VisibilityHelper.trashed_assets()
+    )
     result = await db.execute(query)
     assets = result.scalars().all()
     

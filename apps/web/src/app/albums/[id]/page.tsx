@@ -3,8 +3,8 @@
 import { useState, Suspense } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { AnimatePresence } from "framer-motion";
-import { ArrowLeft, Share2, Edit, MoreHorizontal, Trash2, Plus } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import { ArrowLeft, Share2, Edit, MoreHorizontal, Trash2, Plus, Download } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Sidebar } from "@/components/layout/sidebar";
 import { AssetGrid } from "@/components/asset/asset-grid";
@@ -15,8 +15,10 @@ import { ConfirmModal } from "@/components/ui/modal";
 import { Dropdown, DropdownItem, DropdownSeparator } from "@/components/ui/dropdown";
 import { Skeleton } from "@/components/ui/skeleton";
 import { albumsApi, type Asset } from "@/lib/api";
-import { formatDate } from "@/lib/utils";
+import { formatDate, formatFileSize } from "@/lib/utils";
+import { useAppStore } from "@/store";
 import toast from "react-hot-toast";
+import { X, Image as ImageIcon } from "lucide-react";
 
 function AlbumDetailContent() {
   const params = useParams();
@@ -24,8 +26,10 @@ function AlbumDetailContent() {
   const queryClient = useQueryClient();
   const albumId = parseInt(params.id as string);
 
+  const { selectedAssets, clearSelection, setBatchMode, batchMode } = useAppStore();
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [showDelete, setShowDelete] = useState(false);
+  const [showBatchRemove, setShowBatchRemove] = useState(false);
 
   // 获取相册详情
   const { data: album, isLoading } = useQuery({
@@ -34,9 +38,16 @@ function AlbumDetailContent() {
   });
 
   // 获取相册资产
-  const { data: assets, isLoading: assetsLoading } = useQuery({
+  const { data: assets, isLoading: assetsLoading, refetch: refetchAssets } = useQuery({
     queryKey: ["albumAssets", albumId],
     queryFn: () => albumsApi.getAssets(albumId).then((r) => r.data),
+  });
+
+  // 获取相册统计
+  const { data: stats } = useQuery({
+    queryKey: ["albumStats", albumId],
+    queryFn: () => albumsApi.getStats(albumId).then((r) => r.data),
+    enabled: !!album,
   });
 
   // 删除相册
@@ -57,12 +68,66 @@ function AlbumDetailContent() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["albumAssets", albumId] });
       queryClient.invalidateQueries({ queryKey: ["album", albumId] });
+      queryClient.invalidateQueries({ queryKey: ["albumStats", albumId] });
       toast.success("已从相册移除");
     },
     onError: () => {
       toast.error("移除失败");
     },
   });
+
+  // 批量移除资产
+  const batchRemoveMutation = useMutation({
+    mutationFn: (assetIds: number[]) => albumsApi.removeAssets(albumId, assetIds),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["albumAssets", albumId] });
+      queryClient.invalidateQueries({ queryKey: ["album", albumId] });
+      queryClient.invalidateQueries({ queryKey: ["albumStats", albumId] });
+      toast.success(`已移除 ${selectedAssets.length} 个资产`);
+      clearSelection();
+      setShowBatchRemove(false);
+    },
+    onError: () => {
+      toast.error("批量移除失败");
+    },
+  });
+
+  // 设为封面
+  const setCoverMutation = useMutation({
+    mutationFn: (assetId: number) => albumsApi.update(albumId, { cover_asset_id: assetId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["album", albumId] });
+      queryClient.invalidateQueries({ queryKey: ["albums"] });
+      toast.success("封面已更新");
+      clearSelection();
+    },
+    onError: () => {
+      toast.error("设置失败");
+    },
+  });
+
+  const handleDownload = async () => {
+    try {
+      toast.promise(
+        albumsApi.download(albumId).then((response) => {
+          const url = window.URL.createObjectURL(new Blob([response.data]));
+          const link = document.createElement('a');
+          link.href = url;
+          link.setAttribute('download', `${album?.name || "album"}.zip`);
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+        }),
+        {
+          loading: "正在准备下载...",
+          success: "开始下载",
+          error: "下载请求失败",
+        }
+      );
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -123,9 +188,23 @@ function AlbumDetailContent() {
                     </Badge>
                   )}
                 </div>
-                <p className="text-sm text-[var(--muted-foreground)] mt-1">
-                  {album.asset_count} 个资产 · 更新于 {formatDate(album.updated_at, "relative")}
-                </p>
+                <div className="flex items-center gap-3 mt-1 text-sm text-[var(--muted-foreground)]">
+                  <span>{stats?.asset_count || album.asset_count || 0} 个资产</span>
+                  {stats?.total_size && (
+                    <>
+                      <span>·</span>
+                      <span>{formatFileSize(stats.total_size)}</span>
+                    </>
+                  )}
+                  {stats?.date_range?.start && (
+                    <>
+                      <span>·</span>
+                      <span>
+                        {formatDate(stats.date_range.start)} - {formatDate(stats.date_range.end || stats.date_range.start)}
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
 
               <div className="flex items-center gap-2">
@@ -146,6 +225,12 @@ function AlbumDetailContent() {
                     onClick={() => toast.success("编辑功能开发中")}
                   >
                     编辑相册
+                  </DropdownItem>
+                  <DropdownItem
+                    icon={<Download className="h-4 w-4" />}
+                    onClick={handleDownload}
+                  >
+                    下载相册
                   </DropdownItem>
                   <DropdownSeparator />
                   <DropdownItem
@@ -188,7 +273,57 @@ function AlbumDetailContent() {
         )}
       </AnimatePresence>
 
-      {/* 删除确认 */}
+      {/* 批量操作工具栏 */}
+      <AnimatePresence>
+        {selectedAssets.length > 0 && (
+          <motion.div
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-40"
+          >
+            <div className="bg-[var(--background)]/80 backdrop-blur-md border border-[var(--border)] text-[var(--foreground)] px-4 py-2 rounded-full shadow-2xl flex items-center gap-2">
+              <div className="flex items-center gap-2 border-r border-[var(--border)] pr-3 mr-1">
+                <span className="font-medium text-sm">{selectedAssets.length} 已选择</span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 rounded-full"
+                  onClick={clearSelection}
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+
+              {/* 设为封面 */}
+              {selectedAssets.length === 1 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={() => setCoverMutation.mutate(selectedAssets[0])}
+                >
+                  <ImageIcon className="h-3 w-3 mr-1.5" />
+                  设为封面
+                </Button>
+              )}
+
+              {/* 移除 */}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs text-red-500 hover:text-red-600 hover:bg-red-500/10"
+                onClick={() => setShowBatchRemove(true)}
+              >
+                <Trash2 className="h-3 w-3 mr-1.5" />
+                移出
+              </Button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 删除相册确认 */}
       <ConfirmModal
         open={showDelete}
         onClose={() => setShowDelete(false)}
@@ -198,6 +333,18 @@ function AlbumDetailContent() {
         confirmText="删除"
         variant="destructive"
         loading={deleteMutation.isPending}
+      />
+
+      {/* 批量移除确认 */}
+      <ConfirmModal
+        open={showBatchRemove}
+        onClose={() => setShowBatchRemove(false)}
+        onConfirm={() => batchRemoveMutation.mutate(selectedAssets)}
+        title="移出资产"
+        description={`确定要将选中的 ${selectedAssets.length} 个资产从相册中移出吗？此操作不会删除原始文件。`}
+        confirmText="移出"
+        variant="destructive"
+        loading={batchRemoveMutation.isPending}
       />
     </div>
   );

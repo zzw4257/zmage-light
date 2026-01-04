@@ -6,7 +6,7 @@ import base64
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from src.models import get_db, Asset
+from src.models import get_db, Asset, User
 from src.services import gemini_image_service, storage_service, asset_service
 from src.services.gemini_image import GeminiImageModel, ImageAspectRatio, ImageSize
 from src.utils.security import get_current_user
@@ -64,6 +64,7 @@ async def generate_image(request: AIImageGenerateRequest):
 @router.post("/edit", response_model=AIImageResponse)
 async def edit_image(
     request: AIImageEditRequest,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -72,7 +73,7 @@ async def edit_image(
     from src.utils.security import VisibilityHelper
     # 获取参考图片
     asset = await db.get(Asset, request.reference_asset_id)
-    if not asset or asset.deleted_at is not None or asset.is_private:
+    if not asset or asset.deleted_at is not None or asset.is_private or asset.user_id != current_user.id:
         # 虽然逻辑相同，但保持导入 VisibilityHelper 以同步未来逻辑
         raise HTTPException(status_code=404, detail="参考资产不存在或不可用")
         

@@ -11,6 +11,7 @@ from src.models import get_db, Asset, User
 from src.schemas import AssetListResponse, AssetResponse
 from src.routers.assets import asset_to_response
 from src.utils.security import verify_password, get_password_hash, create_access_token
+from src.routers.auth import get_current_user
 from src.config import settings
 
 # 简单的请求体 Schema
@@ -31,20 +32,9 @@ router = APIRouter(prefix="/vault", tags=["私密保险库"])
 
 
 async def get_current_user_with_vault(
-    request: Request,
-    db: AsyncSession = Depends(get_db)
+    user: User = Depends(get_current_user),
 ):
-    """
-    获取当前用户 (仅用于 MVP，实际应从 Auth Token 获取)
-    暂时假设只有一个用户，或者从 Bearer Token 中解出 user_id
-    由于 User 认证在 auth.py 中，这里简化处理：
-    假设调用者已经通过了主认证 (main auth)，这里只是附加 Vault 认证。
-    为了 MVP，先查询第一个用户。
-    """
-    result = await db.execute(select(User).limit(1))
-    user = result.scalars().first()
-    if not user:
-        raise HTTPException(status_code=404, detail="用户不存在")
+    """获取当前用户"""
     return user
 
 
@@ -119,8 +109,14 @@ async def list_vault_assets(
     db: AsyncSession = Depends(get_db),
 ):
     from src.utils.security import VisibilityHelper
-    query = select(Asset).where(VisibilityHelper.private_assets())
-    count_query = select(func.count(Asset.id)).where(VisibilityHelper.private_assets())
+    query = select(Asset).where(
+        Asset.user_id == _authorized["user_id"],
+        VisibilityHelper.private_assets()
+    )
+    count_query = select(func.count(Asset.id)).where(
+        Asset.user_id == _authorized["user_id"],
+        VisibilityHelper.private_assets()
+    )
     
     total = await db.scalar(count_query)
     
@@ -140,12 +136,13 @@ async def list_vault_assets(
 @router.post("/assets/{asset_id}/move-in", summary="移入保险库")
 async def move_in_vault(
     asset_id: int,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """将资产移入保险库"""
     asset = await db.get(Asset, asset_id)
-    if not asset:
-        raise HTTPException(status_code=404)
+    if not asset or asset.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="资产不存在")
         
     asset.is_private = True
     await db.commit()
@@ -155,13 +152,13 @@ async def move_in_vault(
 @router.post("/assets/{asset_id}/move-out", summary="移出保险库")
 async def move_out_vault(
     asset_id: int,
-    _authorized: bool = Depends(verify_vault_token),
+    _authorized: dict = Depends(verify_vault_token),
     db: AsyncSession = Depends(get_db),
 ):
     """将资产移出保险库 (变回公开)"""
     asset = await db.get(Asset, asset_id)
-    if not asset:
-        raise HTTPException(status_code=404)
+    if not asset or asset.user_id != _authorized["user_id"]:
+        raise HTTPException(status_code=404, detail="资产不存在")
         
     asset.is_private = False
     await db.commit()

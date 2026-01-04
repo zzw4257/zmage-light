@@ -2,7 +2,11 @@
 相册相关 API 路由
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+import os
+import zipfile
+import tempfile
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, insert, delete
 
@@ -11,6 +15,9 @@ from src.schemas import (
     AlbumCreate, AlbumUpdate, AlbumResponse, AlbumDetailResponse, SuggestedAlbumResponse,
 )
 from src.services import storage_service
+
+from src.routers.auth import get_current_user
+from src.models.user import User
 
 router = APIRouter(prefix="/albums", tags=["相册管理"])
 
@@ -41,10 +48,11 @@ def album_to_response(album: Album, asset_count: int = 0) -> AlbumResponse:
 async def list_albums(
     album_type: Optional[AlbumType] = None,
     status: Optional[AlbumStatus] = None,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取相册列表"""
-    query = select(Album)
+    query = select(Album).where(Album.user_id == current_user.id)
     
     if album_type:
         query = query.where(Album.album_type == album_type)
@@ -74,12 +82,81 @@ async def list_albums(
     return responses
 
 
+@router.get("/{album_id}/preview", summary="获取相册预览资产")
+async def get_album_preview(
+    album_id: int,
+    limit: int = Query(4, ge=1, le=9),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取相册预览资产（用于封面未设置时的马赛克展示）"""
+    from src.services.album import album_service
+    from src.routers.assets import asset_to_response
+    
+    assets = await album_service.get_album_preview_assets(db, album_id, current_user.id, limit)
+    return {
+        "album_id": album_id,
+        "preview_urls": [storage_service.get_public_url(a.thumbnail_path) for a in assets if a.thumbnail_path],
+        "assets": [asset_to_response(a) for a in assets],
+    }
+
+
+@router.get("/{album_id}/stats", summary="获取相册统计信息")
+async def get_album_stats(
+    album_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取相册统计信息"""
+    from src.services.album import album_service
+    
+    stats = await album_service.get_album_stats(db, album_id, current_user.id)
+    if not stats:
+        raise HTTPException(status_code=404, detail="相册不存在")
+    return stats
+
+
+@router.post("/{album_id}/auto-cover", summary="自动选择相册封面")
+async def auto_select_album_cover(
+    album_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """自动选择最佳封面图片"""
+    from src.services.album import album_service
+    
+    cover_id = await album_service.auto_select_cover(db, album_id, current_user.id)
+    if cover_id is None:
+        raise HTTPException(status_code=404, detail="相册为空或不存在")
+    return {"cover_asset_id": cover_id, "message": "封面已更新"}
+
+
+@router.get("/{album_id}/smart-preview", summary="预览智能相册结果")
+async def preview_smart_album(
+    album_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """预览智能相册规则匹配的资产"""
+    from src.services.album import album_service
+    from src.routers.assets import asset_to_response
+    
+    assets = await album_service.evaluate_smart_album(db, album_id, current_user.id)
+    return {
+        "album_id": album_id,
+        "matched_count": len(assets),
+        "assets": [asset_to_response(a) for a in assets[:50]],  # 最多返回50个预览
+    }
+
+
 @router.get("/suggestions", response_model=List[SuggestedAlbumResponse], summary="获取相册建议")
 async def list_album_suggestions(
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取 AI 生成的相册建议"""
     query = select(Album).where(
+        Album.user_id == current_user.id,
         Album.album_type == AlbumType.SUGGESTED,
         Album.status == AlbumStatus.PENDING,
     ).order_by(Album.suggestion_score.desc())
@@ -137,15 +214,20 @@ async def list_album_suggestions(
 @router.post("", response_model=AlbumResponse, summary="创建相册")
 async def create_album(
     data: AlbumCreate,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """创建新相册"""
+    """创建新相册（支持手动/智能相册）"""
+    album_type = data.album_type if data.album_type else AlbumType.MANUAL
+    
     album = Album(
         name=data.name,
         description=data.description,
         cover_asset_id=data.cover_asset_id,
-        album_type=AlbumType.MANUAL,
+        album_type=album_type,
         status=AlbumStatus.ACCEPTED,
+        user_id=current_user.id,
+        smart_rules=data.smart_rules if album_type == AlbumType.SMART else None,
     )
     db.add(album)
     await db.commit()
@@ -168,11 +250,12 @@ async def create_album(
 @router.get("/{album_id}", response_model=AlbumDetailResponse, summary="获取相册详情")
 async def get_album(
     album_id: int,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取相册详情"""
     album = await db.get(Album, album_id)
-    if not album:
+    if not album or album.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="相册不存在")
     
     from src.utils.security import VisibilityHelper
@@ -211,11 +294,12 @@ async def get_album(
 async def update_album(
     album_id: int,
     data: AlbumUpdate,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """更新相册信息"""
     album = await db.get(Album, album_id)
-    if not album:
+    if not album or album.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="相册不存在")
     
     update_data = data.model_dump(exclude_unset=True)
@@ -238,11 +322,12 @@ async def update_album(
 @router.delete("/{album_id}", summary="删除相册")
 async def delete_album(
     album_id: int,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """删除相册"""
     album = await db.get(Album, album_id)
-    if not album:
+    if not album or album.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="相册不存在")
     
     # 删除关联
@@ -261,11 +346,12 @@ async def delete_album(
 async def add_assets_to_album(
     album_id: int,
     asset_ids: List[int],
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """添加资产到相册"""
     album = await db.get(Album, album_id)
-    if not album:
+    if not album or album.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="相册不存在")
     
     for asset_id in asset_ids:
@@ -362,3 +448,76 @@ async def ignore_album_suggestion(
     asset_count = count_result.scalar()
     
     return album_to_response(album, asset_count)
+
+@router.get("/{album_id}/download", summary="下载相册")
+async def download_album(
+    album_id: int,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """打包下载相册"""
+    # 检查相册是否存在
+    query = select(Album).where(
+        Album.id == album_id,
+        (Album.user_id == current_user.id) | (Album.status == AlbumStatus.ACCEPTED)
+    )
+    result = await db.execute(query)
+    album = result.scalar_one_or_none()
+    
+    if not album:
+        raise HTTPException(status_code=404, detail="相册不存在")
+        
+    if album.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="无权访问")
+
+    # 获取相册资产
+    stmt = (
+        select(Asset)
+        .join(album_assets, album_assets.c.asset_id == Asset.id)
+        .where(
+            album_assets.c.album_id == album_id,
+            Asset.status == "ready",
+            Asset.deleted_at.is_(None),
+        )
+    )
+    result = await db.execute(stmt)
+    assets = result.scalars().all()
+    
+    if not assets:
+        raise HTTPException(status_code=400, detail="相册为空")
+
+    # 创建临时文件
+    fd, temp_path = tempfile.mkstemp(suffix=".zip")
+    os.close(fd)
+    
+    try:
+        with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for asset in assets:
+                try:
+                    # 从存储服务下载文件
+                    file_data = await storage_service.download_file(asset.file_path)
+                    # 确定文件名
+                    filename = asset.original_filename or f"{asset.id}.jpg"
+                    # 处理重名
+                    # 简单处理：如果重名，添加 ID 前缀
+                    # 这里暂时假设 original_filename 较唯一，或 MinIO key 唯一
+                    # 为防止 zip 内路径冲突，可以使用 id_filename
+                    arcname = f"{asset.id}_{filename}"
+                    zf.writestr(arcname, file_data)
+                except Exception as e:
+                    print(f"Error downloading asset {asset.id}: {e}")
+                    continue
+                    
+        # 后台任务删除临时文件
+        background_tasks.add_task(os.remove, temp_path)
+        
+        return FileResponse(
+            temp_path,
+            filename=f"{album.name}.zip",
+            media_type="application/zip"
+        )
+    except Exception as e:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise HTTPException(status_code=500, detail=str(e))

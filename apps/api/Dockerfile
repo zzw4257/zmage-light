@@ -6,6 +6,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     libmagic1 \
     ffmpeg \
+    libgl1 \
+    libglib2.0-0 \
+    libheif1 \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制依赖文件

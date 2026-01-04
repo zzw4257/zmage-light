@@ -13,7 +13,6 @@ interface SelectionToolbarProps {
     onAddToAlbum: () => void;
     onBatchDownload: () => void;
     onBatchTag: () => void;
-    onMoveToVault: () => void;
 }
 
 export function SelectionToolbar({

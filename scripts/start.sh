@@ -50,14 +50,20 @@ export REDIS_URL="redis://img-lib-redis:6379/0"
 export QDRANT_URL="http://img-lib-qdrant:6333"
 export S3_ENDPOINT="http://img-lib-minio:9000"
 
+BUILD_FLAG=""
+if [ "$1" == "--build" ]; then
+    BUILD_FLAG="--build"
+    echo "🏗️  将重新构建镜像..."
+fi
+
 if [ -n "$COMPOSE_CMD" ]; then
     # 启动服务
     echo ""
     echo "📦 启动服务..."
     # 停止旧服务 (可选，避免端口冲突)
-    $COMPOSE_CMD down --remove-orphans > /dev/null 2>&1
+    # $COMPOSE_CMD down --remove-orphans > /dev/null 2>&1
 
-    $COMPOSE_CMD -f docker-compose.yml up -d --build
+    $COMPOSE_CMD -f docker-compose.yml up -d $BUILD_FLAG
 fi
 
 echo ""

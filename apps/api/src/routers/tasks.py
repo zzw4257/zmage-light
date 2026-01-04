@@ -7,14 +7,16 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
-from src.models import get_db, Task, TaskType, TaskStatus, Asset, Album, Collection, Share, SystemConfig
+from src.models import get_db, Task, TaskType, TaskStatus, Asset, Album, Collection, Share, SystemConfig, User
 from src.schemas import TaskResponse, TaskListResponse, TaskStatusResponse, TriggerScanRequest, SystemStatsResponse
+from src.routers.auth import get_current_user
 
 router = APIRouter(prefix="/tasks", tags=["后台任务"])
 
 
 @router.get("/status", response_model=TaskStatusResponse, summary="获取任务状态")
 async def get_task_status(
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取后台任务状态概览"""
@@ -32,23 +34,23 @@ async def get_task_status(
     
     # 统计任务数量
     pending_result = await db.execute(
-        select(func.count(Task.id)).where(Task.status == TaskStatus.PENDING)
+        select(func.count(Task.id)).where(Task.status == TaskStatus.PENDING, Task.user_id == current_user.id)
     )
     pending_tasks = pending_result.scalar()
     
     running_result = await db.execute(
-        select(func.count(Task.id)).where(Task.status == TaskStatus.RUNNING)
+        select(func.count(Task.id)).where(Task.status == TaskStatus.RUNNING, Task.user_id == current_user.id)
     )
     running_tasks = running_result.scalar()
     
     failed_result = await db.execute(
-        select(func.count(Task.id)).where(Task.status == TaskStatus.FAILED)
+        select(func.count(Task.id)).where(Task.status == TaskStatus.FAILED, Task.user_id == current_user.id)
     )
     failed_tasks = failed_result.scalar()
     
     # 获取最近任务
     recent_result = await db.execute(
-        select(Task).order_by(Task.created_at.desc()).limit(10)
+        select(Task).where(Task.user_id == current_user.id).order_by(Task.created_at.desc()).limit(10)
     )
     recent_tasks = recent_result.scalars().all()
     
@@ -66,6 +68,7 @@ async def get_task_status(
 async def trigger_task(
     data: TriggerScanRequest,
     background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """手动触发后台任务"""
@@ -82,6 +85,7 @@ async def trigger_task(
     task = Task(
         task_type=task_type,
         status=TaskStatus.PENDING,
+        user_id=current_user.id,
         # params={"triggered_by": "manual"},
     )
     db.add(task)
@@ -136,6 +140,7 @@ async def generate_album_suggestions(db: AsyncSession, task: Task):
     from src.utils.security import VisibilityHelper
     result = await db.execute(
         select(Asset).where(
+            Asset.user_id == task.user_id,
             Asset.status == AssetStatus.READY,
             Asset.created_at >= cutoff_date,
             VisibilityHelper.active_assets()
@@ -183,6 +188,7 @@ async def generate_album_suggestions(db: AsyncSession, task: Task):
             status=AlbumStatus.PENDING,
             suggestion_reason=suggestion.get("reason"),
             suggestion_score=suggestion.get("confidence", 0.5),
+            user_id=task.user_id,
         )
         db.add(album)
         await db.commit()
@@ -225,7 +231,11 @@ async def reindex_vectors(db: AsyncSession, task: Task):
     # 获取所有就绪资产
     from src.utils.security import VisibilityHelper
     result = await db.execute(
-        select(Asset).where(Asset.status == AssetStatus.READY, VisibilityHelper.active_assets())
+        select(Asset).where(
+            Asset.user_id == task.user_id,
+            Asset.status == AssetStatus.READY, 
+            VisibilityHelper.active_assets()
+        )
     )
     assets = result.scalars().all()
     
@@ -266,36 +276,37 @@ async def reindex_vectors(db: AsyncSession, task: Task):
 
 @router.get("/stats", response_model=SystemStatsResponse, summary="获取系统统计")
 async def get_system_stats(
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取系统统计信息"""
     from src.models import AssetType
     
     from src.utils.security import VisibilityHelper
-    total_assets_result = await db.execute(select(func.count(Asset.id)).where(VisibilityHelper.active_assets()))
+    total_assets_result = await db.execute(select(func.count(Asset.id)).where(Asset.user_id == current_user.id, VisibilityHelper.active_assets()))
     total_assets = total_assets_result.scalar()
     
     # 相册总数
-    total_albums_result = await db.execute(select(func.count(Album.id)))
+    total_albums_result = await db.execute(select(func.count(Album.id)).where(Album.user_id == current_user.id))
     total_albums = total_albums_result.scalar()
     
     # 集合总数
-    total_collections_result = await db.execute(select(func.count(Collection.id)))
+    total_collections_result = await db.execute(select(func.count(Collection.id)).where(Collection.user_id == current_user.id))
     total_collections = total_collections_result.scalar()
     
     # 分享总数
-    total_shares_result = await db.execute(select(func.count(Share.id)))
+    total_shares_result = await db.execute(select(func.count(Share.id)).where(Share.user_id == current_user.id))
     total_shares = total_shares_result.scalar()
     
     # 待审核建议
     from src.models import AlbumStatus
     pending_result = await db.execute(
-        select(func.count(Album.id)).where(Album.status == AlbumStatus.PENDING)
+        select(func.count(Album.id)).where(Album.user_id == current_user.id, Album.status == AlbumStatus.PENDING)
     )
     pending_suggestions = pending_result.scalar()
     
     # 存储使用量
-    storage_result = await db.execute(select(func.sum(Asset.file_size)))
+    storage_result = await db.execute(select(func.sum(Asset.file_size)).where(Asset.user_id == current_user.id))
     storage_used = storage_result.scalar() or 0
     
     # 按类型统计

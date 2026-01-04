@@ -11,6 +11,8 @@ from src.schemas import (
     CollectionCreate, CollectionUpdate, CollectionResponse, CollectionDetailResponse,
 )
 from src.services import storage_service
+from src.routers.auth import get_current_user
+from src.models.user import User
 
 router = APIRouter(prefix="/collections", tags=["集合管理"])
 
@@ -37,11 +39,12 @@ def collection_to_response(collection: Collection, asset_count: int = 0) -> Coll
 
 @router.get("", response_model=List[CollectionResponse], summary="获取集合列表")
 async def list_collections(
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取所有集合"""
     result = await db.execute(
-        select(Collection).order_by(Collection.updated_at.desc())
+        select(Collection).where(Collection.user_id == current_user.id).order_by(Collection.updated_at.desc())
     )
     collections = result.scalars().all()
     
@@ -63,6 +66,7 @@ async def list_collections(
 @router.post("", response_model=CollectionResponse, summary="创建集合")
 async def create_collection(
     data: CollectionCreate,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """创建新集合"""
@@ -70,6 +74,7 @@ async def create_collection(
         name=data.name,
         description=data.description,
         notes=data.notes,
+        user_id=current_user.id,
     )
     db.add(collection)
     await db.commit()
@@ -92,11 +97,12 @@ async def create_collection(
 @router.get("/{collection_id}", response_model=CollectionDetailResponse, summary="获取集合详情")
 async def get_collection(
     collection_id: int,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取集合详情"""
     collection = await db.get(Collection, collection_id)
-    if not collection:
+    if not collection or collection.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="集合不存在")
     
     from src.utils.security import VisibilityHelper
@@ -128,11 +134,12 @@ async def get_collection(
 async def update_collection(
     collection_id: int,
     data: CollectionUpdate,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """更新集合信息"""
     collection = await db.get(Collection, collection_id)
-    if not collection:
+    if not collection or collection.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="集合不存在")
     
     update_data = data.model_dump(exclude_unset=True)
@@ -157,11 +164,12 @@ async def update_collection(
 @router.delete("/{collection_id}", summary="删除集合")
 async def delete_collection(
     collection_id: int,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """删除集合"""
     collection = await db.get(Collection, collection_id)
-    if not collection:
+    if not collection or collection.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="集合不存在")
     
     # 删除关联
@@ -180,11 +188,12 @@ async def delete_collection(
 async def add_assets_to_collection(
     collection_id: int,
     asset_ids: List[int],
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """添加资产到集合"""
     collection = await db.get(Collection, collection_id)
-    if not collection:
+    if not collection or collection.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="集合不存在")
     
     for asset_id in asset_ids:

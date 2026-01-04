@@ -2,15 +2,88 @@
 图片编辑服务
 """
 import io
-from PIL import Image, ImageEnhance
-from typing import Optional
+from PIL import Image, ImageEnhance, ImageOps
+from typing import Optional, List, Dict, Any
 
 
 class ImageEditorService:
     """图片编辑服务"""
     
-    @staticmethod
+    def process_history(self, image_data: bytes, ops: List[Dict[str, Any]]) -> bytes:
+        """
+        基于操作历史处理图片
+        
+        Args:
+            image_data: 原始图片
+            ops: 操作列表 [{type: 'rotate', params: {degree: 90}}, ...]
+        """
+        img = Image.open(io.BytesIO(image_data))
+        
+        # 自动旋转 (根据 EXIF)
+        img = ImageOps.exif_transpose(img)
+        
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+            
+        for op in ops:
+            try:
+                op_type = op.get("type")
+                params = op.get("params", {})
+                
+                if op_type == "rotate":
+                    # 顺时针旋转
+                    degree = float(params.get("degree", 0))
+                    # PIL rotate is CCW, so we use negative for CW
+                    # expand=True ensures the full rotated image is kept
+                    img = img.rotate(-degree, expand=True, resample=Image.BICUBIC)
+                    
+                elif op_type == "crop":
+                    current_w, current_h = img.size
+                    x = int(params.get("x", 0))
+                    y = int(params.get("y", 0))
+                    w = int(params.get("width", current_w))
+                    h = int(params.get("height", current_h))
+                    
+                    # Bounds checking & clamping
+                    x = max(0, x)
+                    y = max(0, y)
+                    w = min(current_w - x, w)
+                    h = min(current_h - y, h)
+                    
+                    if w > 0 and h > 0:
+                        img = img.crop((x, y, x + w, y + h))
+                    
+                elif op_type == "adjust":
+                    if "brightness" in params:
+                        img = ImageEnhance.Brightness(img).enhance(float(params["brightness"]))
+                    if "contrast" in params:
+                        img = ImageEnhance.Contrast(img).enhance(float(params["contrast"]))
+                    if "saturation" in params:
+                        img = ImageEnhance.Color(img).enhance(float(params["saturation"]))
+                    if "sharpness" in params:
+                        img = ImageEnhance.Sharpness(img).enhance(float(params["sharpness"]))
+                        
+                elif op_type == "flip":
+                    if params.get("horizontal"):
+                        img = ImageOps.mirror(img)
+                    if params.get("vertical"):
+                        img = ImageOps.flip(img)
+                        
+            except Exception as e:
+                # Log error but continue with other ops? Or stop?
+                # Professional: Skip failed op but warn. For now, just print/log.
+                print(f"Image processing op failed: {op_type} - {e}")
+
+        output = io.BytesIO()
+        # Ensure RGB mode for JPEG
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+            
+        img.save(output, format="JPEG", quality=95)
+        return output.getvalue()
+    
     def process_image(
+        self,
         image_data: bytes,
         crop: Optional[dict] = None,
         brightness: float = 1.0,
@@ -19,57 +92,23 @@ class ImageEditorService:
         sharpness: float = 1.0,
     ) -> bytes:
         """
-        处理图片
-        
-        Args:
-            image_data: 原始图片数据
-            crop: 裁剪参数 {"x": int, "y": int, "width": int, "height": int}
-            brightness: 亮度 (1.0 为原图)
-            contrast: 对比度 (1.0 为原图)
-            saturation: 饱和度 (1.0 为原图)
-            sharpness: 锐度 (1.0 为原图)
-            
-        Returns:
-            处理后的图片数据 (JPEG)
+        处理图片 (Legacy Wrapper)
         """
-        img = Image.open(io.BytesIO(image_data))
-        
-        # 转换模式以支持更多格式
-        if img.mode in ("RGBA", "P"):
-            img = img.convert("RGB")
-            
-        # 裁剪
+        ops = []
         if crop:
-            x = crop.get("x", 0)
-            y = crop.get("y", 0)
-            w = crop.get("width", img.width)
-            h = crop.get("height", img.height)
-            img = img.crop((x, y, x + w, y + h))
+            ops.append({"type": "crop", "params": crop})
             
-        # 亮度
-        if brightness != 1.0:
-            enhancer = ImageEnhance.Brightness(img)
-            img = enhancer.enhance(brightness)
+        # Adjustments
+        adjust_params = {}
+        if brightness != 1.0: adjust_params["brightness"] = brightness
+        if contrast != 1.0: adjust_params["contrast"] = contrast
+        if saturation != 1.0: adjust_params["saturation"] = saturation
+        if sharpness != 1.0: adjust_params["sharpness"] = sharpness
+        
+        if adjust_params:
+            ops.append({"type": "adjust", "params": adjust_params})
             
-        # 对比度
-        if contrast != 1.0:
-            enhancer = ImageEnhance.Contrast(img)
-            img = enhancer.enhance(contrast)
-            
-        # 饱和度 (颜色)
-        if saturation != 1.0:
-            enhancer = ImageEnhance.Color(img)
-            img = enhancer.enhance(saturation)
-            
-        # 锐度
-        if sharpness != 1.0:
-            enhancer = ImageEnhance.Sharpness(img)
-            img = enhancer.enhance(sharpness)
-            
-        # 输出为 JPEG
-        output = io.BytesIO()
-        img.save(output, format="JPEG", quality=95)
-        return output.getvalue()
+        return self.process_history(image_data, ops)
 
 
 image_editor_service = ImageEditorService()

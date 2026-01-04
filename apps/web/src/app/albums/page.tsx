@@ -1,10 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import Image from "next/image";
-import { Plus, MoreHorizontal, Edit, Trash2, Image as ImageIcon } from "lucide-react";
+import { Plus, MoreHorizontal, Edit, Trash2, SortAsc, Filter, Sparkles, FolderHeart, Image as ImageIcon } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Button } from "@/components/ui/button";
@@ -13,23 +12,54 @@ import { Modal, ConfirmModal } from "@/components/ui/modal";
 import { Badge } from "@/components/ui/badge";
 import { Dropdown, DropdownItem, DropdownSeparator } from "@/components/ui/dropdown";
 import { Skeleton } from "@/components/ui/skeleton";
-import { albumsApi, getStorageUrl, type Album } from "@/lib/api";
-import { cn, formatDate } from "@/lib/utils";
+import { AlbumCover } from "@/components/album/album-cover";
+import { SmartAlbumModal } from "@/components/album/smart-album-modal";
+import { albumsApi, type Album } from "@/lib/api";
+import { cn, formatDate, formatFileSize } from "@/lib/utils";
 import toast from "react-hot-toast";
 
 export default function AlbumsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
+  const [showSmartCreate, setShowSmartCreate] = useState(false);
   const [editAlbum, setEditAlbum] = useState<Album | null>(null);
   const [deleteAlbum, setDeleteAlbum] = useState<Album | null>(null);
   const [formData, setFormData] = useState({ name: "", description: "" });
+  const [sortBy, setSortBy] = useState<"name" | "updated_at" | "asset_count">("updated_at");
+  const [filterType, setFilterType] = useState<"all" | "manual" | "smart">("all");
 
   // 获取相册列表
   const { data: albums, isLoading } = useQuery({
     queryKey: ["albums"],
     queryFn: () => albumsApi.list({ status: "accepted" }).then((r) => r.data),
   });
+
+  // 排序和筛选
+  const sortedAlbums = useMemo(() => {
+    if (!albums) return [];
+    let filtered = [...albums];
+
+    // 筛选
+    if (filterType !== "all") {
+      filtered = filtered.filter((a) => a.album_type === filterType);
+    }
+
+    // 排序
+    filtered.sort((a, b) => {
+      switch (sortBy) {
+        case "name":
+          return a.name.localeCompare(b.name);
+        case "asset_count":
+          return (b.asset_count || 0) - (a.asset_count || 0);
+        case "updated_at":
+        default:
+          return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+      }
+    });
+
+    return filtered;
+  }, [albums, sortBy, filterType]);
 
   // 创建相册
   const createMutation = useMutation({
@@ -114,13 +144,75 @@ export default function AlbumsPage() {
               <div>
                 <h1 className="text-xl font-semibold">相册</h1>
                 <p className="text-sm text-[var(--muted-foreground)] mt-1">
-                  {albums?.length ?? 0} 个相册
+                  {sortedAlbums.length} 个相册
                 </p>
               </div>
-              <Button onClick={() => setShowCreate(true)}>
-                <Plus className="h-4 w-4 mr-2" />
-                创建相册
-              </Button>
+              <div className="flex items-center gap-2">
+                {/* 筛选 */}
+                <Dropdown
+                  trigger={
+                    <Button variant="outline" size="sm" className="gap-1">
+                      <Filter className="h-4 w-4" />
+                      {filterType === "all" ? "全部" : filterType === "manual" ? "手动" : "智能"}
+                    </Button>
+                  }
+                  align="right"
+                >
+                  <DropdownItem onClick={() => setFilterType("all")}>
+                    全部相册
+                  </DropdownItem>
+                  <DropdownItem
+                    icon={<FolderHeart className="h-4 w-4" />}
+                    onClick={() => setFilterType("manual")}
+                  >
+                    手动相册
+                  </DropdownItem>
+                  <DropdownItem
+                    icon={<Sparkles className="h-4 w-4" />}
+                    onClick={() => setFilterType("smart")}
+                  >
+                    智能相册
+                  </DropdownItem>
+                </Dropdown>
+
+                {/* 排序 */}
+                <Dropdown
+                  trigger={
+                    <Button variant="outline" size="sm" className="gap-1">
+                      <SortAsc className="h-4 w-4" />
+                      {sortBy === "updated_at" ? "最近" : sortBy === "name" ? "名称" : "数量"}
+                    </Button>
+                  }
+                  align="right"
+                >
+                  <DropdownItem onClick={() => setSortBy("updated_at")}>
+                    最近更新
+                  </DropdownItem>
+                  <DropdownItem onClick={() => setSortBy("name")}>
+                    名称
+                  </DropdownItem>
+                  <DropdownItem onClick={() => setSortBy("asset_count")}>
+                    资产数量
+                  </DropdownItem>
+                </Dropdown>
+
+                <Dropdown
+                  trigger={
+                    <Button className="gap-2">
+                      <Plus className="h-4 w-4" />
+                      创建相册
+                    </Button>
+                  }
+                  align="right"
+                >
+                  <DropdownItem onClick={() => setShowCreate(true)} icon={<FolderHeart className="h-4 w-4" />}>
+                    普通相册
+                  </DropdownItem>
+                  <DropdownItem onClick={() => setShowSmartCreate(true)} icon={<Sparkles className="h-4 w-4" />}>
+                    智能相册
+                  </DropdownItem>
+                </Dropdown>
+              </div>
             </div>
           </div>
 
@@ -138,28 +230,17 @@ export default function AlbumsPage() {
                   </div>
                 ))}
               </div>
-            ) : albums && albums.length > 0 ? (
+            ) : sortedAlbums.length > 0 ? (
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {albums.map((album) => (
+                {sortedAlbums.map((album) => (
                   <div
                     key={album.id}
                     className="group glass rounded-2xl overflow-hidden cursor-pointer hover:shadow-lg transition-shadow"
                     onClick={() => router.push(`/albums/${album.id}`)}
                   >
-                    {/* 封面 */}
-                    <div className="relative aspect-[4/3] bg-[var(--muted)]">
-                      {album.cover_url ? (
-                        <Image
-                          src={album.cover_url}
-                          alt={album.name}
-                          fill
-                          className="object-cover"
-                        />
-                      ) : (
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <ImageIcon className="h-12 w-12 text-[var(--muted-foreground)]" />
-                        </div>
-                      )}
+                    {/* 封面 - 使用 AlbumCover 组件 */}
+                    <div className="relative aspect-[4/3]">
+                      <AlbumCover album={album} />
 
                       {/* 操作菜单 */}
                       <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -346,16 +427,23 @@ export default function AlbumsPage() {
       </Modal>
 
       {/* 删除确认 */}
-      <ConfirmModal
+      <Modal
         open={!!deleteAlbum}
         onClose={() => setDeleteAlbum(null)}
-        onConfirm={() => deleteAlbum && deleteMutation.mutate(deleteAlbum.id)}
         title="删除相册"
-        description={`确定要删除相册 "${deleteAlbum?.name}" 吗？相册中的资产不会被删除。`}
-        confirmText="删除"
-        variant="destructive"
-        loading={deleteMutation.isPending}
-      />
+        description="确定要删除这个相册吗？其中的照片不会被删除。"
+      >
+        <div className="flex justify-end gap-3 mt-4">
+          <Button variant="outline" onClick={() => setDeleteAlbum(null)}>
+            取消
+          </Button>
+          <Button variant="destructive" onClick={() => deleteMutation.mutate(deleteAlbum!.id)}>
+            删除
+          </Button>
+        </div>
+      </Modal>
+
+      <SmartAlbumModal open={showSmartCreate} onClose={() => setShowSmartCreate(false)} />
     </div>
   );
 }

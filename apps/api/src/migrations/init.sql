@@ -187,12 +187,12 @@ CREATE TABLE IF NOT EXISTS download_presets (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- 插入默认下载预设
-INSERT INTO download_presets (name, description, format, quality, is_default, "order") VALUES
-    ('原图', '保持原始格式和尺寸', 'original', 100, TRUE, 0),
-    ('高质量 JPEG', '高质量 JPEG 格式', 'jpeg', 95, FALSE, 1),
-    ('网页优化', '适合网页使用的尺寸', 'webp', 85, FALSE, 2)
-ON CONFLICT DO NOTHING;
+-- Insert default download presets (only if users table has at least one user)
+-- This is commented out because it requires a valid user_id.
+-- Default presets should be created in the app logic when a user registers.
+-- INSERT INTO download_presets (name, description, format, quality, is_default, "order", user_id) 
+-- SELECT '原图', '保持原始格式和尺寸', 'original', 100, TRUE, 0, id FROM users LIMIT 1
+-- ON CONFLICT DO NOTHING;
 
 -- 自定义字段定义表
 CREATE TABLE IF NOT EXISTS custom_field_definitions (
@@ -279,3 +279,40 @@ ALTER TABLE albums ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
 CREATE INDEX IF NOT EXISTS idx_albums_deleted_at ON albums(deleted_at);
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS vault_pin_hash VARCHAR(255);
+
+-- 2026-01-04: Add multi-user isolation columns to existing tables
+-- Add user_id to assets table
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_assets_user_id ON assets(user_id);
+
+-- Add user_id to folders table
+ALTER TABLE folders ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_folders_user_id ON folders(user_id);
+
+-- Add user_id to albums table 
+ALTER TABLE albums ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_albums_user_id ON albums(user_id);
+
+-- Add user_id to collections table
+ALTER TABLE collections ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_collections_user_id ON collections(user_id);
+
+-- Add user_id to shares table
+ALTER TABLE shares ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_shares_user_id ON shares(user_id);
+
+-- Add user_id to portals table
+ALTER TABLE portals ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_portals_user_id ON portals(user_id);
+
+-- Add user_id to download_presets table
+ALTER TABLE download_presets ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_download_presets_user_id ON download_presets(user_id);
+
+-- Add user_id to custom_field_definitions table (if exists)
+ALTER TABLE custom_field_definitions ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_custom_field_definitions_user_id ON custom_field_definitions(user_id);
+
+-- Add user_id to tasks table
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);

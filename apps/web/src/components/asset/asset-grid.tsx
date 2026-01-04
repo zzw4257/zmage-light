@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { AssetCard } from "./asset-card";
+import { DragSelect } from "@/components/ui/drag-select";
 import { AssetGridSkeleton } from "@/components/ui/skeleton";
 import type { Asset } from "@/lib/api";
 import { useAppStore } from "@/store";
@@ -27,7 +28,15 @@ export function AssetGrid({
   onAssetMoveToVault,
   actionRenderer,
 }: AssetGridProps) {
-  const { selectedAssets, toggleAssetSelection } = useAppStore();
+  const { selectedAssets, toggleAssetSelection, setSelectedAssets, setBatchMode, batchMode } = useAppStore();
+
+  const handleDragSelection = (indices: number[]) => {
+    const selectedIds = indices.map(index => assets[index].id);
+    if (selectedIds.length > 0 && !batchMode) {
+      setBatchMode(true);
+    }
+    setSelectedAssets(selectedIds);
+  };
 
   if (loading) {
     return <AssetGridSkeleton count={12} />;
@@ -64,14 +73,17 @@ export function AssetGrid({
   }
 
   return (
-    <div className="asset-grid">
+    <DragSelect onSelectionChange={handleDragSelection} className="asset-grid">
       <AnimatePresence mode="popLayout">
         {assets.map((asset) => (
           <AssetCard
             key={asset.id}
             asset={asset}
             selected={selectedAssets.includes(asset.id)}
-            onSelect={() => toggleAssetSelection(asset.id)}
+            onSelect={() => {
+              if (!batchMode) setBatchMode(true);
+              toggleAssetSelection(asset.id);
+            }}
             onClick={() => onAssetClick?.(asset)}
             onEdit={() => onAssetEdit?.(asset)}
             onDelete={() => onAssetDelete?.(asset)}
@@ -81,6 +93,6 @@ export function AssetGrid({
           />
         ))}
       </AnimatePresence>
-    </div>
+    </DragSelect>
   );
 }

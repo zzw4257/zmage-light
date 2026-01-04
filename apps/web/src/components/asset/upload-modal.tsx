@@ -2,13 +2,13 @@
 
 import { useState, useCallback } from "react";
 import { useDropzone } from "react-dropzone";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, X, File, CheckCircle, AlertCircle, Loader2, FolderPlus } from "lucide-react";
+import { Upload, X, File, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
+import { AlbumSelector } from "@/components/album/album-selector";
 import { assetsApi, albumsApi } from "@/lib/api";
-import { useQuery } from "@tanstack/react-query";
 import { cn, formatFileSize, generateId } from "@/lib/utils";
 import toast from "react-hot-toast";
 
@@ -32,10 +32,29 @@ export function UploadModal({ open, onClose, folderPath }: UploadModalProps) {
   const [uploading, setUploading] = useState(false);
   const [selectedAlbumId, setSelectedAlbumId] = useState<number | null>(null);
 
-  const { data: albums } = useQuery({
+  const { data: albums, refetch: refetchAlbums } = useQuery({
     queryKey: ["albums", "list"],
     queryFn: () => albumsApi.list().then((r) => r.data),
   });
+
+  // 创建新相册
+  const createAlbumMutation = useMutation({
+    mutationFn: (name: string) => albumsApi.create({ name }),
+    onSuccess: (response) => {
+      refetchAlbums();
+      setSelectedAlbumId(response.data.id);
+      toast.success(`相册「${response.data.name}」创建成功`);
+    },
+    onError: () => {
+      toast.error("创建相册失败");
+    },
+  });
+
+  const handleCreateAlbum = (name: string) => {
+    createAlbumMutation.mutate(name);
+  };
+
+  const isCreatingAlbum = createAlbumMutation.isPending;
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const newFiles: UploadFile[] = acceptedFiles.map((file) => ({
@@ -150,21 +169,16 @@ export function UploadModal({ open, onClose, folderPath }: UploadModalProps) {
       description="支持图片、视频、PDF 文档，单文件最大 500MB"
       size="lg"
     >
-      <div className="flex items-center gap-4 mb-4">
-        <div className="flex-1">
-          <select
-            className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--background)]"
-            value={selectedAlbumId || ""}
-            onChange={(e) => setSelectedAlbumId(e.target.value ? Number(e.target.value) : null)}
-          >
-            <option value="">上传到默认位置 (不添加到相册)</option>
-            {albums?.map((album) => (
-              <option key={album.id} value={album.id}>
-                {album.name}
-              </option>
-            ))}
-          </select>
-        </div>
+      {/* 相册选择器 - 增强版 */}
+      <div className="mb-4">
+        <label className="text-sm font-medium mb-2 block">上传到相册（可选）</label>
+        <AlbumSelector
+          albums={albums || []}
+          selectedId={selectedAlbumId}
+          onSelect={setSelectedAlbumId}
+          onCreateNew={(name) => handleCreateAlbum(name)}
+          isCreating={isCreatingAlbum}
+        />
       </div>
 
       {/* 拖放区域 */}

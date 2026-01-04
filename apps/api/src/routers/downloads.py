@@ -12,17 +12,20 @@ from sqlalchemy import select
 from src.models import get_db, Asset, DownloadPreset
 from src.schemas import DownloadPresetCreate, DownloadPresetResponse
 from src.services import storage_service
+from src.routers.auth import get_current_user
+from src.models.user import User
 
 router = APIRouter(prefix="/downloads", tags=["下载管理"])
 
 
 @router.get("/presets", response_model=List[DownloadPresetResponse], summary="获取下载预设列表")
 async def list_download_presets(
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取所有下载预设"""
     result = await db.execute(
-        select(DownloadPreset).order_by(DownloadPreset.order)
+        select(DownloadPreset).where(DownloadPreset.user_id == current_user.id).order_by(DownloadPreset.order)
     )
     presets = result.scalars().all()
     return [DownloadPresetResponse.model_validate(p) for p in presets]
@@ -31,13 +34,14 @@ async def list_download_presets(
 @router.post("/presets", response_model=DownloadPresetResponse, summary="创建下载预设")
 async def create_download_preset(
     data: DownloadPresetCreate,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """创建下载预设"""
     from sqlalchemy import func
     
     # 获取最大排序值
-    max_order_result = await db.execute(select(func.max(DownloadPreset.order)))
+    max_order_result = await db.execute(select(func.max(DownloadPreset.order)).where(DownloadPreset.user_id == current_user.id))
     max_order = max_order_result.scalar() or 0
     
     preset = DownloadPreset(
@@ -49,6 +53,7 @@ async def create_download_preset(
         format=data.format,
         quality=data.quality,
         order=max_order + 1,
+        user_id=current_user.id,
     )
     db.add(preset)
     await db.commit()
@@ -60,11 +65,12 @@ async def create_download_preset(
 @router.delete("/presets/{preset_id}", summary="删除下载预设")
 async def delete_download_preset(
     preset_id: int,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """删除下载预设"""
     preset = await db.get(DownloadPreset, preset_id)
-    if not preset:
+    if not preset or preset.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="预设不存在")
     
     await db.delete(preset)
@@ -81,6 +87,7 @@ async def download_asset(
     height: Optional[int] = Query(None, description="自定义高度"),
     aspect_ratio: Optional[str] = Query(None, description="裁剪比例，如 16:9"),
     format: Optional[str] = Query(None, description="输出格式：original, jpg, png, webp"),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -93,7 +100,7 @@ async def download_asset(
     """
     from src.utils.security import VisibilityHelper
     asset = await db.get(Asset, asset_id)
-    if not asset or asset.deleted_at is not None:
+    if not asset or asset.deleted_at is not None or asset.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="资产不存在")
     if asset.is_private:
         # 抛出 403，后续可增加 Vault Token 校验支持

@@ -20,6 +20,32 @@ from src.services.gemini import gemini_service
 from src.services.vector import vector_service
 from src.schemas.asset import AssetSearchRequest
 
+# 注册 HEIF 支持
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    pass
+
+# 支持的文件格式白名单
+SUPPORTED_FORMATS = {
+    # 图片格式
+    'image/jpeg': ['.jpg', '.jpeg'],
+    'image/png': ['.png'],
+    'image/webp': ['.webp'],
+    'image/heif': ['.heif', '.heic'],
+    'image/heic': ['.heic'],
+    # 视频格式
+    'video/mp4': ['.mp4'],
+    'video/quicktime': ['.mov'],
+    'video/x-msvideo': ['.avi'],
+    'video/x-matroska': ['.mkv'],
+}
+
+SUPPORTED_EXTENSIONS = set()
+for exts in SUPPORTED_FORMATS.values():
+    SUPPORTED_EXTENSIONS.update(exts)
+
 
 class AssetService:
     """资产服务"""
@@ -102,6 +128,7 @@ class AssetService:
         db: AsyncSession,
         file_data: bytes,
         filename: str,
+        user_id: int,  # 新增：所有者 ID
         folder_path: Optional[str] = None,
         custom_fields: Optional[Dict[str, Any]] = None,
     ) -> Asset:
@@ -135,6 +162,15 @@ class AssetService:
             mime_type = "application/octet-stream"
         
         asset_type = self.detect_asset_type(mime_type)
+        
+        # 验证文件格式
+        file_ext = os.path.splitext(filename)[1].lower()
+        if file_ext not in SUPPORTED_EXTENSIONS:
+            supported_list = ', '.join(sorted(SUPPORTED_EXTENSIONS))
+            raise ValueError(
+                f"不支持的文件格式: {file_ext}。"
+                f"当前支持的格式: {supported_list}"
+            )
         
         # 生成存储路径
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -178,17 +214,27 @@ class AssetService:
             # 生成缩略图
             try:
                 thumbnail_data = await storage_service.generate_thumbnail(file_data)
-                thumbnail_path = f"thumbnails/{safe_filename}"
+                thumbnail_path = f"thumbnails/{safe_filename}.jpg"
                 await storage_service.upload_bytes(thumbnail_data, thumbnail_path, "image/jpeg")
             except Exception as e:
-                print(f"缩略图生成失败: {e}")
+                print(f"图片缩略图生成失败: {e}")
+        elif asset_type == AssetType.VIDEO:
+            # 视频预处理
+            exif_tags = ["视频"]
+            try:
+                thumbnail_data = await storage_service.generate_video_thumbnail(file_data)
+                if thumbnail_data:
+                    thumbnail_path = f"thumbnails/{safe_filename}.jpg"
+                    await storage_service.upload_bytes(thumbnail_data, thumbnail_path, "image/jpeg")
+            except Exception as e:
+                print(f"视频缩略图生成失败: {e}")
         else:
             exif_tags = []
         
         # 处理文件夹
         folder_id = None
         if folder_path:
-            folder = await self.get_or_create_folder(db, folder_path)
+            folder = await self.get_or_create_folder(db, folder_path, user_id)
             folder_id = folder.id
         
         # 创建资产记录
@@ -213,6 +259,7 @@ class AssetService:
             folder_id=folder_id,
             tags=exif_tags,
             status=AssetStatus.PENDING,
+            user_id=user_id,  # 新增
         )
         
         db.add(asset)
@@ -235,10 +282,15 @@ class AssetService:
         
         try:
             asset.status = AssetStatus.PROCESSING
+            asset.processing_step = "downloading"
             await db.commit()
             
             # 下载文件
             file_data = await storage_service.download_file(asset.file_path)
+            
+            # Step: AI Analysis
+            asset.processing_step = "ai_analysis"
+            await db.commit()
             
             # AI 分析
             if asset.asset_type == AssetType.IMAGE:
@@ -248,6 +300,25 @@ class AssetService:
                 asset.description = analysis.get("description", "")
                 asset.tags = analysis.get("tags", [])
                 asset.ocr_text = analysis.get("ocr_text", "")
+            elif asset.asset_type == AssetType.VIDEO:
+                # 视频分析需要临时文件路径
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix=os.path.splitext(asset.original_filename)[1], delete=False) as tmp:
+                    tmp.write(file_data)
+                    tmp_path = tmp.name
+                
+                try:
+                    analysis = await gemini_service.analyze_video(tmp_path)
+                    asset.title = analysis.get("title", "")
+                    asset.description = analysis.get("description", "")
+                    asset.tags = analysis.get("tags", [])
+                finally:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+            
+            # Step: Vector Embedding
+            asset.processing_step = "vector"
+            await db.commit()
             
             # 生成向量嵌入
             text_for_embedding = " ".join([
@@ -274,16 +345,19 @@ class AssetService:
                 )
                 asset.vector_id = vector_id
             
+            # Step: Completed
+            asset.processing_step = "completed"
             asset.status = AssetStatus.READY
             await db.commit()
             
         except Exception as e:
             asset.status = AssetStatus.FAILED
+            asset.processing_step = "failed"
             asset.error_message = str(e)
             await db.commit()
             raise
     
-    async def get_or_create_folder(self, db: AsyncSession, path: str) -> Folder:
+    async def get_or_create_folder(self, db: AsyncSession, path: str, user_id: int) -> Folder:
         """获取或创建文件夹"""
         # 规范化路径
         path = path.strip("/")
@@ -297,7 +371,7 @@ class AssetService:
             current_path = f"{current_path}/{part}" if current_path else part
             
             result = await db.execute(
-                select(Folder).where(Folder.path == current_path)
+                select(Folder).where(Folder.path == current_path, Folder.user_id == user_id)
             )
             folder = result.scalar_one_or_none()
             
@@ -306,6 +380,7 @@ class AssetService:
                     name=part,
                     parent_id=parent_id,
                     path=current_path,
+                    user_id=user_id,
                 )
                 db.add(folder)
                 await db.commit()
@@ -319,6 +394,7 @@ class AssetService:
         self,
         db: AsyncSession,
         request: AssetSearchRequest,
+        current_user_id: int,  # 新增：当前用户 ID
     ) -> tuple:
         """
         搜索资产
@@ -331,8 +407,16 @@ class AssetService:
             (资产列表, 总数)
         """
         from src.utils.security import VisibilityHelper
-        query = select(Asset).where(Asset.status == AssetStatus.READY, VisibilityHelper.active_assets())
-        count_query = select(func.count(Asset.id)).where(Asset.status == AssetStatus.READY, VisibilityHelper.active_assets())
+        query = select(Asset).where(
+            Asset.status == AssetStatus.READY,
+            Asset.user_id == current_user_id,  # 核心过滤
+            VisibilityHelper.active_assets()
+        )
+        count_query = select(func.count(Asset.id)).where(
+            Asset.status == AssetStatus.READY,
+            Asset.user_id == current_user_id,  # 核心过滤
+            VisibilityHelper.active_assets()
+        )
         
         # 文本搜索
         if request.query and not request.ai_search:
@@ -425,6 +509,7 @@ class AssetService:
         self,
         db: AsyncSession,
         asset_id: int,
+        user_id: int,
         limit: int = 10,
     ) -> List[tuple]:
         """
@@ -433,7 +518,8 @@ class AssetService:
         Args:
             db: 数据库会话
             asset_id: 资产 ID
-            limit: 返回数量
+            user_id: 用户 ID
+            limit: 返回数量 (默认为 10)
             
         Returns:
             [(资产, 相似度), ...]
@@ -445,7 +531,12 @@ class AssetService:
         
         asset_ids = [r["asset_id"] for r in vector_results]
         result = await db.execute(
-            select(Asset).where(Asset.id.in_(asset_ids), Asset.deleted_at.is_(None), Asset.is_private.is_(False))
+            select(Asset).where(
+                Asset.id.in_(asset_ids), 
+                Asset.user_id == user_id,  # 核心过滤
+                Asset.deleted_at.is_(None), 
+                Asset.is_private.is_(False)
+            )
         )
         assets = {a.id: a for a in result.scalars().all()}
         

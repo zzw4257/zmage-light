@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from src.models import (
     get_db, Share, Asset, Collection, collection_assets,
-    Portal
+    Portal, User
 )
 from src.schemas import (
     ShareCreate, ShareResponse, ShareAccessRequest, ShareContentResponse,
@@ -48,11 +48,11 @@ def share_to_response(share: Share) -> ShareResponse:
 @router.get("", response_model=List[ShareResponse], summary="获取所有分享链接")
 async def list_shares(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """获取所有分享链接"""
     result = await db.execute(
-        select(Share).order_by(Share.created_at.desc())
+        select(Share).where(Share.user_id == current_user.id).order_by(Share.created_at.desc())
     )
     shares = result.scalars().all()
     return [share_to_response(s) for s in shares]
@@ -71,15 +71,15 @@ async def create_share(
     if data.asset_id and data.collection_id:
         raise HTTPException(status_code=400, detail="只能分享资产或集合其中之一")
     
-    # 验证资产/集合存在
+    # 验证资产/集合存在且归属当前用户
     if data.asset_id:
         asset = await db.get(Asset, data.asset_id)
-        if not asset:
+        if not asset or asset.user_id != current_user.id:
             raise HTTPException(status_code=404, detail="资产不存在")
     
     if data.collection_id:
         collection = await db.get(Collection, data.collection_id)
-        if not collection:
+        if not collection or collection.user_id != current_user.id:
             raise HTTPException(status_code=404, detail="集合不存在")
     
     # 计算过期时间
@@ -98,6 +98,7 @@ async def create_share(
         permission=data.permission,
         password_hash=hashed_password,
         expires_at=expires_at,
+        user_id=current_user.id,
     )
     db.add(share)
     await db.commit()
@@ -189,11 +190,11 @@ async def access_share(
 async def delete_share(
     share_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """删除分享链接"""
     share = await db.get(Share, share_id)
-    if not share:
+    if not share or share.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="分享链接不存在")
     
     await db.delete(share)
@@ -253,11 +254,11 @@ def portal_to_response(portal: Portal) -> PortalResponse:
 @portal_router.get("", response_model=List[PortalResponse], summary="获取所有 Portal")
 async def list_portals(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """获取所有 Portal"""
     result = await db.execute(
-        select(Portal).order_by(Portal.created_at.desc())
+        select(Portal).where(Portal.user_id == current_user.id).order_by(Portal.created_at.desc())
     )
     portals = result.scalars().all()
     return [portal_to_response(p) for p in portals]
@@ -277,9 +278,9 @@ async def create_portal(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Portal 路径已存在")
     
-    # 验证集合存在
+    # 验证集合存在且归属当前用户
     collection = await db.get(Collection, data.collection_id)
-    if not collection:
+    if not collection or collection.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="集合不存在")
     
     # 加密密码
@@ -298,6 +299,7 @@ async def create_portal(
         filterable=data.filterable,
         allow_download=data.allow_download,
         password_hash=hashed_password,
+        user_id=current_user.id,
     )
     db.add(portal)
     await db.commit()
@@ -413,11 +415,11 @@ async def update_portal(
     portal_id: int,
     data: PortalUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """更新 Portal"""
     portal = await db.get(Portal, portal_id)
-    if not portal:
+    if not portal or portal.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Portal 不存在")
     
     update_data = data.model_dump(exclude_unset=True)
@@ -443,11 +445,11 @@ async def update_portal(
 async def delete_portal(
     portal_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """删除 Portal"""
     portal = await db.get(Portal, portal_id)
-    if not portal:
+    if not portal or portal.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Portal 不存在")
     
     await db.delete(portal)

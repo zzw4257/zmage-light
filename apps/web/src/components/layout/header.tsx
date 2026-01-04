@@ -9,6 +9,7 @@ import {
   Sparkles,
   Grid3X3,
   List,
+  Check,
   Settings,
   Bell,
   MessageSquare,
@@ -38,6 +39,9 @@ export function Header({ onUploadClick, onAIChatClick }: HeaderProps) {
     setViewMode,
     sidebarOpen,
     toggleSidebar,
+    batchMode,
+    setBatchMode,
+    clearSelection,
   } = useAppStore();
 
   const [localQuery, setLocalQuery] = useState(searchQuery);
@@ -150,6 +154,29 @@ export function Header({ onUploadClick, onAIChatClick }: HeaderProps) {
               <List className="h-4 w-4" />
             </button>
           </div>
+
+          <div className="h-6 w-px bg-[var(--border)] mx-1" />
+
+          {/* 批量选择开关 */}
+          {/* 批量选择开关 - 增强可见性 */}
+          <Button
+            variant={batchMode ? "default" : "secondary"}
+            size="sm"
+            onClick={() => {
+              if (batchMode) {
+                clearSelection();
+              } else {
+                setBatchMode(true);
+              }
+            }}
+            className={cn(
+              "gap-2 border-2",
+              batchMode ? "bg-blue-500 hover:bg-blue-600 text-white shadow-lg border-blue-600" : "border-gray-200"
+            )}
+          >
+            <Check className="h-4 w-4" />
+            <span className="font-bold">批量操作</span>
+          </Button>
 
           {/* 上传按钮 */}
           <Button onClick={onUploadClick} className="hidden md:flex">

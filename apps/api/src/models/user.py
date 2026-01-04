@@ -2,11 +2,14 @@
 用户数据模型
 """
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, TYPE_CHECKING
 from sqlalchemy import String, Boolean, DateTime, Integer
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.database import Base
+
+if TYPE_CHECKING:
+    from src.models.asset import Asset
 
 
 class User(Base):
@@ -36,3 +39,6 @@ class User(Base):
     # 时间戳
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # 关系
+    assets: Mapped[List["Asset"]] = relationship("Asset", back_populates="user")

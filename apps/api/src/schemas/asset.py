@@ -38,6 +38,10 @@ class AssetEdit(BaseModel):
     contrast: float = 1.0
     saturation: float = 1.0
     sharpness: float = 1.0
+    
+    # 高级编辑
+    history: Optional[List[Dict[str, Any]]] = None  # 操作历史: [{type: 'rotate', params: {degree: 90}}, ...]
+    save_as_new: bool = False  # 是否保存为新资产 (False则创建新版本覆盖)
 
 
 class AssetResponse(BaseModel):
