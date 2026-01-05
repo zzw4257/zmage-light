@@ -3,7 +3,7 @@ Pydantic 模型模块
 """
 from src.schemas.asset import (
     AssetBase, AssetCreate, AssetUpdate, AssetResponse, AssetListResponse,
-    AssetSearchRequest, SimilarAssetResponse, AssetEdit,
+    AssetSearchRequest, SimilarAssetResponse, AssetEdit, AssetAIEdit,
     FolderBase, FolderCreate, FolderResponse, FolderTreeResponse,
     CustomFieldBase, CustomFieldCreate, CustomFieldResponse,
     UploadResponse, BatchUploadResponse,

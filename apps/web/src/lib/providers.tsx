@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 import { Toaster } from "react-hot-toast";
 import { motion, AnimatePresence } from "framer-motion";
 import { ErrorBoundary } from "@/components/common/error-boundary";
-
+import { OnboardingProvider } from "@/components/onboarding/onboarding-provider";
 import { usePathname, useRouter } from "next/navigation";
 
 function LoadingBar() {
@@ -71,33 +71,35 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <AuthGuard>
-          <LoadingBar />
-          {children}
-          <Toaster
-            position="top-center"
-            toastOptions={{
-              duration: 3000,
-              style: {
-                background: "var(--card)",
-                color: "var(--card-foreground)",
-                border: "1px solid var(--border)",
-                borderRadius: "12px",
-                padding: "12px 16px",
-              },
-              success: {
-                iconTheme: {
-                  primary: "#22c55e",
-                  secondary: "#fff",
+          <OnboardingProvider>
+            <LoadingBar />
+            {children}
+            <Toaster
+              position="top-center"
+              toastOptions={{
+                duration: 3000,
+                style: {
+                  background: "var(--card)",
+                  color: "var(--card-foreground)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "12px",
+                  padding: "12px 16px",
                 },
-              },
-              error: {
-                iconTheme: {
-                  primary: "#ef4444",
-                  secondary: "#fff",
+                success: {
+                  iconTheme: {
+                    primary: "#22c55e",
+                    secondary: "#fff",
+                  },
                 },
-              },
-            }}
-          />
+                error: {
+                  iconTheme: {
+                    primary: "#ef4444",
+                    secondary: "#fff",
+                  },
+                },
+              }}
+            />
+          </OnboardingProvider>
         </AuthGuard>
       </QueryClientProvider>
     </ErrorBoundary>

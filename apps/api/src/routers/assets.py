@@ -13,7 +13,7 @@ from src.schemas import (
     AssetResponse, AssetListResponse, AssetUpdate, AssetSearchRequest,
     SimilarAssetResponse, FolderResponse, FolderTreeResponse, FolderCreate,
     CustomFieldResponse, CustomFieldCreate, UploadResponse, BatchUploadResponse,
-    AssetEdit,
+    AssetEdit, AssetAIEdit,
 )
 from src.services import asset_service, storage_service, album_service
 
@@ -481,6 +481,122 @@ async def edit_asset(
         background_tasks.add_task(process_asset_background, asset.id)
         
         return asset_to_response(asset)
+
+
+@router.post("/{asset_id}/ai-edit", response_model=AssetResponse, summary="AI 智能编辑")
+async def ai_edit_asset(
+    asset_id: int,
+    data: AssetAIEdit,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    使用 AI (Gemini) 进行智能编辑
+    
+    - 支持风格转换、智能改图
+    - 生成结果保存为新版本或新资产
+    """
+    from src.services.gemini_image import gemini_image_service, ImageAspectRatio
+    
+    asset = await db.get(Asset, asset_id)
+    if not asset or asset.asset_type != AssetType.IMAGE or asset.user_id != current_user.id:
+        raise HTTPException(status_code=400, detail="资产不存在或不是图片")
+    
+    try:
+        # 1. 下载底图
+        image_data = await storage_service.download_file(asset.file_path)
+        
+        # 2. 构造 AI 提示词
+        final_prompt = data.prompt or "Enhance and improve this image professionally"
+        if data.style == "anime":
+            final_prompt += ", in high quality anime style, vibrant colors, clean lines"
+        elif data.style == "oil":
+            final_prompt += ", as a professional oil painting, visible brushstrokes, classic art style"
+        elif data.style == "cinema":
+            final_prompt += ", cinematic lighting, 8k resolution, photorealistic, dramatic atmosphere"
+        elif data.style == "sketch":
+            final_prompt += ", as a detailed pencil sketch, artistic hatching"
+        elif data.style == "pixel":
+            final_prompt += ", in high quality pixel art style, game boy aesthetic"
+            
+        # 3. 调用 Gemini Image API
+        # 注意：这里我们使用底图作为参考图进行 EDIT
+        ar = ImageAspectRatio.SQUARE
+        if data.aspect_ratio == "PORTRAIT": ar = ImageAspectRatio.PORTRAIT
+        elif data.aspect_ratio == "LANDSCAPE": ar = ImageAspectRatio.LANDSCAPE
+        
+        images = await gemini_image_service.generate_image(
+            prompt=final_prompt,
+            negative_prompt=data.negative_prompt,
+            reference_images=[image_data],
+            reference_mime_types=[asset.mime_type],
+            aspect_ratio=ar
+        )
+        
+        if not images:
+            raise HTTPException(status_code=500, detail="AI 生成失败，请稍后重试")
+            
+        edited_data = images[0]
+        
+        # 4. 保存逻辑 (复用部分 edit_asset 逻辑或简单实现)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        new_filename = f"ai_{timestamp}_{asset.original_filename}"
+        if not new_filename.endswith(".jpg"):
+            new_filename += ".jpg"
+            
+        if data.save_as_new:
+            new_path = f"assets/{new_filename}"
+            await storage_service.upload_bytes(edited_data, new_path, "image/jpeg")
+            
+            thumbnail_data = await storage_service.generate_thumbnail(edited_data)
+            thumbnail_path = f"thumbnails/{new_filename}"
+            await storage_service.upload_bytes(thumbnail_data, thumbnail_path, "image/jpeg")
+            
+            new_asset = Asset(
+                filename=new_filename,
+                original_filename=asset.original_filename,
+                file_path=new_path,
+                thumbnail_path=thumbnail_path,
+                file_size=len(edited_data),
+                mime_type="image/jpeg",
+                asset_type=AssetType.IMAGE,
+                file_hash=calculate_file_hash(edited_data),
+                title=f"{asset.title or asset.filename} (AI 增强)",
+                folder_id=asset.folder_id,
+                user_id=current_user.id,
+                status=AssetStatus.PENDING,
+            )
+            db.add(new_asset)
+            await db.commit()
+            await db.refresh(new_asset)
+            
+            background_tasks.add_task(process_asset_background, new_asset.id)
+            return asset_to_response(new_asset)
+        else:
+            # 版本控制模式
+            # (简略实现，实际可以优化复用 edit_asset 的 version 逻辑)
+            new_path = f"assets/{new_filename}"
+            await storage_service.upload_bytes(edited_data, new_path, "image/jpeg")
+            
+            # 更新当前 asset
+            asset.file_path = new_path
+            asset.file_size = len(edited_data)
+            asset.file_hash = calculate_file_hash(edited_data)
+            
+            thumbnail_data = await storage_service.generate_thumbnail(edited_data)
+            thumbnail_path = f"thumbnails/{new_filename}"
+            await storage_service.upload_bytes(thumbnail_data, thumbnail_path, "image/jpeg")
+            asset.thumbnail_path = thumbnail_path
+            
+            await db.commit()
+            await db.refresh(asset)
+            background_tasks.add_task(process_asset_background, asset.id)
+            return asset_to_response(asset)
+            
+    except Exception as e:
+        print(f"AI Edit failed: {e}")
+        raise HTTPException(status_code=500, detail=f"AI 处理失败: {str(e)}")
 
 
 @router.delete("/{asset_id}", summary="删除资产 (移至回收站)")

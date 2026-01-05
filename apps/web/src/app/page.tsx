@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { Header } from "@/components/layout/header";
 import { Sidebar } from "@/components/layout/sidebar";
 import { AssetGrid } from "@/components/asset/asset-grid";
@@ -23,6 +23,7 @@ import { FeaturedCarousel } from "@/components/asset/featured-carousel";
 import { AIChatDrawer } from "@/components/asset/ai-chat-drawer";
 import { ProcessingStatus } from "@/components/asset/processing-status";
 import { assetsApi, downloadsApi, vaultApi, type Asset } from "@/lib/api";
+import { StatsDashboard } from "@/components/dashboard/stats-dashboard";
 import { useAppStore } from "@/store";
 import { cn, getAssetTypeLabel } from "@/lib/utils";
 import toast from "react-hot-toast";
@@ -240,8 +241,47 @@ function HomeContent() {
             </div>
           </div>
 
+          {/* 批量模式提示横幅 */}
+          <AnimatePresence>
+            {useAppStore.getState().batchMode && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="bg-gradient-to-r from-blue-500/10 via-purple-500/10 to-pink-500/10 border-b border-blue-200 px-6 py-3"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4 text-sm">
+                    <span className="font-medium text-blue-600">📌 批量选择模式已激活</span>
+                    <div className="flex items-center gap-3 text-[var(--muted-foreground)]">
+                      <span>点击卡片选择</span>
+                      <span>•</span>
+                      <span><kbd className="px-1.5 py-0.5 bg-white rounded border text-xs">Shift</kbd>+点击 范围选</span>
+                      <span>•</span>
+                      <span><kbd className="px-1.5 py-0.5 bg-white rounded border text-xs">Ctrl+A</kbd> 全选</span>
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearSelection}
+                    className="text-blue-600 hover:bg-blue-100"
+                  >
+                    退出批量模式
+                  </Button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* 资产网格 */}
           <div className="p-6">
+            {!searchQuery && !folderId && !assetType && (
+              <div className="mb-10">
+                <StatsDashboard />
+              </div>
+            )}
+
             {!searchQuery && !folderId && !assetType && data?.items && data.items.length > 0 && (
               <FeaturedCarousel
                 assets={data.items.slice(0, 5)}

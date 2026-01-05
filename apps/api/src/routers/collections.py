@@ -2,9 +2,10 @@
 集合相关 API 路由
 """
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, insert, delete
+from sqlalchemy.orm import joinedload
 
 from src.models import get_db, Collection, Asset, collection_assets
 from src.schemas import (
@@ -20,9 +21,8 @@ router = APIRouter(prefix="/collections", tags=["集合管理"])
 def collection_to_response(collection: Collection, asset_count: int = 0) -> CollectionResponse:
     """转换集合为响应模型"""
     cover_url = None
-    if collection.cover_asset_id:
-        # 获取封面 URL
-        pass  # 需要查询资产
+    if collection.cover_asset:
+        cover_url = storage_service.get_public_url(collection.cover_asset.thumbnail_path)
     
     return CollectionResponse(
         id=collection.id,
@@ -44,7 +44,10 @@ async def list_collections(
 ):
     """获取所有集合"""
     result = await db.execute(
-        select(Collection).where(Collection.user_id == current_user.id).order_by(Collection.updated_at.desc())
+        select(Collection)
+        .where(Collection.user_id == current_user.id)
+        .options(joinedload(Collection.cover_asset))
+        .order_by(Collection.updated_at.desc())
     )
     collections = result.scalars().all()
     
@@ -101,8 +104,15 @@ async def get_collection(
     db: AsyncSession = Depends(get_db),
 ):
     """获取集合详情"""
-    collection = await db.get(Collection, collection_id)
-    if not collection or collection.user_id != current_user.id:
+    stmt = (
+        select(Collection)
+        .where(Collection.id == collection_id, Collection.user_id == current_user.id)
+        .options(joinedload(Collection.cover_asset))
+    )
+    result = await db.execute(stmt)
+    collection = result.scalar_one_or_none()
+    
+    if not collection:
         raise HTTPException(status_code=404, detail="集合不存在")
     
     from src.utils.security import VisibilityHelper
@@ -110,11 +120,15 @@ async def get_collection(
         select(Asset).join(collection_assets).where(
             collection_assets.c.collection_id == collection_id,
             VisibilityHelper.active_assets()
-        ).order_by(collection_assets.c.order)
+        ).order_by(collection_assets.c.position)
     )
     assets = result.scalars().all()
     
     from src.routers.assets import asset_to_response
+    
+    cover_url = None
+    if collection.cover_asset:
+        cover_url = storage_service.get_public_url(collection.cover_asset.thumbnail_path)
     
     return CollectionDetailResponse(
         id=collection.id,
@@ -122,7 +136,7 @@ async def get_collection(
         description=collection.description,
         notes=collection.notes,
         cover_asset_id=collection.cover_asset_id,
-        cover_url=None,
+        cover_url=cover_url,
         asset_count=len(assets),
         created_at=collection.created_at,
         updated_at=collection.updated_at,
@@ -235,3 +249,64 @@ async def remove_assets_from_collection(
     await db.commit()
     
     return {"message": "移除成功"}
+
+
+@router.get("/{collection_id}/download", summary="下载集合")
+async def download_collection(
+    collection_id: int,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """打包下载集合内所有资产"""
+    import os
+    import zipfile
+    import tempfile
+    from fastapi.responses import FileResponse
+    
+    collection = await db.get(Collection, collection_id)
+    if not collection or collection.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="集合不存在")
+
+    # 获取集合资产
+    stmt = (
+        select(Asset)
+        .join(collection_assets, collection_assets.c.asset_id == Asset.id)
+        .where(
+            collection_assets.c.collection_id == collection_id,
+            Asset.status == "ready",
+            Asset.deleted_at.is_(None),
+        )
+    )
+    result = await db.execute(stmt)
+    assets = result.scalars().all()
+    
+    if not assets:
+        raise HTTPException(status_code=400, detail="集合为空")
+
+    fd, temp_path = tempfile.mkstemp(suffix=".zip")
+    os.close(fd)
+    
+    try:
+        with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for asset in assets:
+                try:
+                    file_data = await storage_service.download_file(asset.file_path)
+                    filename = asset.original_filename or f"{asset.id}.jpg"
+                    arcname = f"{asset.id}_{filename}"
+                    zf.writestr(arcname, file_data)
+                except Exception as e:
+                    print(f"Error downloading asset {asset.id}: {e}")
+                    continue
+                    
+        background_tasks.add_task(os.remove, temp_path)
+        
+        return FileResponse(
+            temp_path,
+            filename=f"collection_{collection.name}.zip",
+            media_type="application/zip"
+        )
+    except Exception as e:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise HTTPException(status_code=500, detail=str(e))

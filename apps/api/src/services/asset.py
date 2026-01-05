@@ -468,6 +468,7 @@ class AssetService:
             vector_results = await vector_service.search_similar(
                 vector=query_vector,
                 limit=request.page_size * 5, # 扩大候选集以应对后续过滤
+                score_threshold=0.65, # 相似度阈值过滤
             )
             
             if not vector_results:

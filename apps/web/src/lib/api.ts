@@ -226,6 +226,14 @@ export interface AssetEdit {
   save_as_new?: boolean;
 }
 
+export interface AssetAIEdit {
+  prompt?: string;
+  negative_prompt?: string;
+  style?: string;
+  aspect_ratio?: string;
+  save_as_new?: boolean;
+}
+
 // API 方法
 export const assetsApi = {
   list: (params?: {
@@ -242,6 +250,7 @@ export const assetsApi = {
     api.put<Asset>(`/assets/${id}`, data),
 
   edit: (id: number, data: AssetEdit) => api.post<Asset>(`/assets/${id}/edit`, data),
+  aiEdit: (id: number, data: AssetAIEdit) => api.post<Asset>(`/assets/${id}/ai-edit`, data),
 
   delete: (id: number, permanent: boolean = false) => api.delete(`/assets/${id}`, { params: { permanent } }),
 

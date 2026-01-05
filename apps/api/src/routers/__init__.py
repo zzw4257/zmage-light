@@ -13,6 +13,7 @@ from src.routers.ai import router as ai_router
 from src.routers.trash import router as trash_router
 from src.routers.vault import router as vault_router
 from src.routers.batch import router as batch_router  # 新增
+from src.routers.stats import router as stats_router  # 新增
 
 __all__ = [
     "assets_router",
@@ -27,4 +28,5 @@ __all__ = [
     "trash_router",
     "vault_router",
     "batch_router",  # 新增
+    "stats_router",  # 新增
 ]

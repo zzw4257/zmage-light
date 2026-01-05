@@ -4,7 +4,7 @@ import { useState, Suspense } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence } from "framer-motion";
-import { ArrowLeft, Share2, Edit, MoreHorizontal, Trash2, Plus, StickyNote } from "lucide-react";
+import { ArrowLeft, Share2, Edit, MoreHorizontal, Trash2, Plus, StickyNote, Image as ImageIcon } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Sidebar } from "@/components/layout/sidebar";
 import { AssetGrid } from "@/components/asset/asset-grid";
@@ -118,6 +118,20 @@ function CollectionDetailContent() {
               </div>
 
               <div className="flex items-center gap-2">
+                <Button variant="outline" onClick={() => {
+                  collectionsApi.download(collectionId).then((response: any) => {
+                    const url = window.URL.createObjectURL(new Blob([response.data]));
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.setAttribute('download', `${collection.name}.zip`);
+                    document.body.appendChild(link);
+                    link.click();
+                    toast.success("开始打包下载");
+                  }).catch(() => toast.error("下载失败"));
+                }}>
+                  <ImageIcon className="h-4 w-4 mr-2" />
+                  下载
+                </Button>
                 <Button variant="outline" onClick={() => toast.success("分享功能开发中")}>
                   <Share2 className="h-4 w-4 mr-2" />
                   分享

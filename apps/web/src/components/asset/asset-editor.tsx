@@ -14,10 +14,12 @@ import {
     RotateCcw,
     Eye,
     ArrowBigRightDash,
+    Sparkles,
+    Palette,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { type Asset, getStorageUrl, assetsApi } from "@/lib/api";
+import { type Asset, getStorageUrl, assetsApi, type AssetAIEdit } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import toast from "react-hot-toast";
 
@@ -37,8 +39,17 @@ const FILTERS = [
     { name: "柔和", filter: "brightness(110%) contrast(90%) saturate(110%) blur(0.5px)" },
 ];
 
+const AI_STYLES = [
+    { id: "none", name: "原图增强", icon: Sparkles, desc: "保持原意，画质增强" },
+    { id: "anime", name: "二次元", icon: Sparkles, desc: "精美动漫番剧风格" },
+    { id: "cinema", name: "电影感", icon: Sparkles, desc: "写实电影大片质感" },
+    { id: "oil", name: "油画", icon: Sparkles, desc: "古典厚重油画艺术" },
+    { id: "sketch", name: "素描", icon: Sparkles, desc: "细致铅笔素描线条" },
+    { id: "pixel", name: "像素风", icon: Sparkles, desc: "怀旧复古 8-bit 像素" },
+];
+
 export function AssetEditor({ asset, onClose, onSuccess }: AssetEditorProps) {
-    const [activeTab, setActiveTab] = useState<"adjust" | "crop" | "filter">("adjust");
+    const [activeTab, setActiveTab] = useState<"adjust" | "crop" | "filter" | "ai">("adjust");
     const [isProcessing, setIsProcessing] = useState(false);
     const [showOriginal, setShowOriginal] = useState(false);
 
@@ -58,6 +69,11 @@ export function AssetEditor({ asset, onClose, onSuccess }: AssetEditorProps) {
     const [fineRotation, setFineRotation] = useState(0); // Fine -45 to 45
     const [activeFilter, setActiveFilter] = useState("none");
 
+    // AI States
+    const [aiPrompt, setAiPrompt] = useState("");
+    const [aiStyle, setAiStyle] = useState("none");
+    const [aiAspectRatio, setAiAspectRatio] = useState("SQUARE");
+
     const imgRef = useRef<HTMLImageElement>(null);
     const imageUrl = asset.url || getStorageUrl(asset.file_path);
 
@@ -75,6 +91,30 @@ export function AssetEditor({ asset, onClose, onSuccess }: AssetEditorProps) {
             blur: 0,
         });
         setActiveFilter("none");
+        setAiPrompt("");
+        setAiStyle("none");
+    };
+
+    // Helper: AI Save
+    const handleAIEdit = async () => {
+        try {
+            setIsProcessing(true);
+            const data: AssetAIEdit = {
+                prompt: aiPrompt,
+                style: aiStyle,
+                aspect_ratio: aiAspectRatio,
+                save_as_new: true, // AI 生成倾向于保存副本
+            };
+
+            const response = await assetsApi.aiEdit(asset.id, data);
+            toast.success("AI 生成成功（已保存为副本）");
+            onSuccess(response.data);
+            onClose();
+        } catch (error: any) {
+            toast.error(error.response?.data?.detail || "AI 处理失败");
+        } finally {
+            setIsProcessing(false);
+        }
     };
 
     // Helper: Save
@@ -266,8 +306,9 @@ export function AssetEditor({ asset, onClose, onSuccess }: AssetEditorProps) {
                     <div className="flex border-b border-white/10">
                         {[
                             { id: "adjust", icon: Sliders, label: "调节" },
-                            { id: "crop", icon: CropIcon, label: "裁剪 / 旋转" },
-                            { id: "filter", icon: Wand2, label: "滤镜" },
+                            { id: "crop", icon: CropIcon, label: "裁剪" },
+                            { id: "filter", icon: Palette, label: "滤镜" },
+                            { id: "ai", icon: Sparkles, label: "AI 魔法" },
                         ].map((tab) => (
                             <button
                                 key={tab.id}
@@ -302,13 +343,11 @@ export function AssetEditor({ asset, onClose, onSuccess }: AssetEditorProps) {
                                         <div className="flex justify-between items-center text-xs">
                                             <span className="text-white/70 group-hover:text-white transition-colors">{item.label}</span>
                                             <span className="font-mono text-white/40 bg-white/5 px-2 py-0.5 rounded text-[10px]">
-                                                {/* @ts-ignore */}
-                                                {adjustments[item.key]}%
+                                                {adjustments[item.key as keyof typeof adjustments]}%
                                             </span>
                                         </div>
                                         <Slider
-                                            /* @ts-ignore */
-                                            value={[adjustments[item.key]]}
+                                            value={[adjustments[item.key as keyof typeof adjustments]]}
                                             min={item.min} max={item.max} step={1}
                                             onValueChange={([v]) => setAdjustments(p => ({ ...p, [item.key]: v }))}
                                             className="py-1"
@@ -377,7 +416,7 @@ export function AssetEditor({ asset, onClose, onSuccess }: AssetEditorProps) {
                                         )}
                                     >
                                         <img
-                                            src={asset.thumbnail_url || asset.url}
+                                            src={asset.thumbnail_url || asset.url || ""}
                                             className="w-full h-full object-cover transition-transform group-hover:scale-110 duration-700"
                                             style={{ filter: f.filter }}
                                             alt={f.name}
@@ -392,6 +431,76 @@ export function AssetEditor({ asset, onClose, onSuccess }: AssetEditorProps) {
                                         )}
                                     </button>
                                 ))}
+                            </div>
+                        )}
+
+                        {activeTab === "ai" && (
+                            <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
+                                <div className="space-y-3">
+                                    <h3 className="text-xs font-medium text-white/50 uppercase tracking-wider">AI 风格</h3>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {AI_STYLES.map(s => (
+                                            <button
+                                                key={s.id}
+                                                onClick={() => setAiStyle(s.id)}
+                                                className={cn(
+                                                    "p-3 rounded-lg border text-left transition-all",
+                                                    aiStyle === s.id
+                                                        ? "border-blue-500 bg-blue-500/10 text-white"
+                                                        : "border-white/10 hover:border-white/30 text-white/60"
+                                                )}
+                                            >
+                                                <div className="text-[10px] font-medium mb-1">{s.name}</div>
+                                                <div className="text-[8px] opacity-40 line-clamp-1">{s.desc}</div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="space-y-3 border-t border-white/10 pt-6">
+                                    <h3 className="text-xs font-medium text-white/50 uppercase tracking-wider">画面比例</h3>
+                                    <div className="flex gap-2">
+                                        {["SQUARE", "PORTRAIT", "LANDSCAPE"].map(r => (
+                                            <button
+                                                key={r}
+                                                onClick={() => setAiAspectRatio(r)}
+                                                className={cn(
+                                                    "flex-1 py-1.5 rounded-md border text-[10px] transition-all",
+                                                    aiAspectRatio === r
+                                                        ? "border-blue-500 bg-blue-500/10 text-white"
+                                                        : "border-white/10 hover:border-white/30 text-white/60"
+                                                )}
+                                            >
+                                                {r === "SQUARE" && "1:1"}
+                                                {r === "PORTRAIT" && "3:4"}
+                                                {r === "LANDSCAPE" && "16:9"}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="space-y-3 border-t border-white/10 pt-6">
+                                    <h3 className="text-xs font-medium text-white/50 uppercase tracking-wider">智能指令 (可选)</h3>
+                                    <textarea
+                                        value={aiPrompt}
+                                        onChange={(e) => setAiPrompt(e.target.value)}
+                                        placeholder="例如：把背景变成落日余晖，增加动漫感"
+                                        className="w-full bg-white/5 border border-white/10 rounded-lg p-3 text-xs min-h-[80px] focus:outline-none focus:border-blue-500 transition-colors resize-none placeholder:text-white/20"
+                                    />
+                                </div>
+
+                                <Button
+                                    onClick={handleAIEdit}
+                                    loading={isProcessing}
+                                    className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-500/20"
+                                >
+                                    <Sparkles className="h-4 w-4 mr-2" />
+                                    开始魔法生成
+                                </Button>
+
+                                <p className="text-[9px] text-white/30 text-center px-2">
+                                    * AI 生成大约需要 10-30 秒，结果将作为副本保存到您的库中
+                                </p>
                             </div>
                         )}
                     </div>

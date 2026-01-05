@@ -44,6 +44,15 @@ class AssetEdit(BaseModel):
     save_as_new: bool = False  # 是否保存为新资产 (False则创建新版本覆盖)
 
 
+class AssetAIEdit(BaseModel):
+    """AI 资产编辑请求"""
+    prompt: Optional[str] = None
+    negative_prompt: Optional[str] = None
+    style: Optional[str] = None  # 预设风格: "anime", "oil", "cinema", "sketch", "pixel"
+    aspect_ratio: str = "SQUARE" # SQUARE, PORTRAIT, LANDSCAPE
+    save_as_new: bool = True  # AI 生成通常倾向于另存为
+
+
 class AssetResponse(BaseModel):
     """资产响应模型"""
     id: int

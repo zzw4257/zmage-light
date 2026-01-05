@@ -92,6 +92,7 @@ class VectorService:
         limit: int = 20,
         filter_conditions: Optional[Dict[str, Any]] = None,
         exclude_asset_ids: Optional[List[int]] = None,
+        score_threshold: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
         """
         搜索相似向量
@@ -101,6 +102,7 @@ class VectorService:
             limit: 返回数量
             filter_conditions: 过滤条件
             exclude_asset_ids: 排除的资产 ID
+            score_threshold: 相似度阈值
             
         Returns:
             搜索结果列表
@@ -135,6 +137,7 @@ class VectorService:
             limit=limit,
             query_filter=query_filter,
             search_params=SearchParams(hnsw_ef=128, exact=False),
+            score_threshold=score_threshold,
         )
         
         return [

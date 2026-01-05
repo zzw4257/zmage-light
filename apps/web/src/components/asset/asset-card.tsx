@@ -16,7 +16,7 @@ interface AssetCardProps {
   asset: Asset;
   selected?: boolean;
   onSelect?: () => void;
-  onClick?: () => void;
+  onClick?: (e: React.MouseEvent) => void;
   onEdit?: () => void;
   onDelete?: () => void;
   onShare?: () => void;
@@ -45,11 +45,11 @@ export function AssetCard({
   const isVideo = asset.asset_type === "video";
   const isReady = asset.status === "ready";
 
-  const handleClick = () => {
+  const handleClick = (e: React.MouseEvent) => {
     if (batchMode && onSelect) {
       onSelect();
     } else if (onClick) {
-      onClick();
+      onClick(e);
     }
   };
 

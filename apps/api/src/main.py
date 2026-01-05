@@ -26,6 +26,7 @@ from src.routers import (
     trash_router,
     vault_router,
     batch_router,  # 新增批量操作
+    stats_router,  # 新增统计接口
 )
 
 
@@ -172,6 +173,7 @@ app.include_router(ai_router, prefix="/api", dependencies=[Depends(get_current_u
 app.include_router(trash_router, prefix="/api", dependencies=[Depends(get_current_user)])
 app.include_router(vault_router, prefix="/api", dependencies=[Depends(get_current_user)])
 app.include_router(batch_router, prefix="/api/assets", dependencies=[Depends(get_current_user)])
+app.include_router(stats_router, prefix="/api", dependencies=[Depends(get_current_user)])
 
 # Shares router 特殊处理：内部管理接口在 router 定义处或此处加权感校验
 app.include_router(shares_router, prefix="/api")

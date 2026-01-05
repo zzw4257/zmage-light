@@ -14,6 +14,7 @@ from src.schemas.asset import AssetSearchRequest
 from src.services.asset import asset_service
 from src.services.storage import storage_service
 from src.routers.assets import asset_to_response
+from src.services.stats import stats_service
 from src.utils.security import get_current_user
 
 router = APIRouter(prefix="/mcp", tags=["MCP 接口"])
@@ -657,12 +658,7 @@ async def call_tool(
 
         # === 系统信息 ===
         elif name == "get_system_stats":
-            total_assets = await db.scalar(select(func.count(Asset.id)).filter(Asset.user_id == current_user.id, Asset.deleted_at.is_(None)))
-            total_albums = await db.scalar(select(func.count(Album.id)).where(Album.user_id == current_user.id))
-            stats = {
-                "total_assets": total_assets,
-                "total_albums": total_albums,
-            }
+            stats = await stats_service.get_dashboard_stats(db, current_user.id)
             return MCPCallResponse(content=[{"type": "json", "data": stats}])
 
         elif name == "get_task_status":

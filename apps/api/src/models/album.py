@@ -112,6 +112,7 @@ class Collection(Base):
     # 关系
     user: Mapped["User"] = relationship("User")
     assets: Mapped[List["Asset"]] = relationship("Asset", secondary=collection_assets, backref="collections")
+    cover_asset: Mapped[Optional["Asset"]] = relationship("Asset", foreign_keys=[cover_asset_id])
     shares: Mapped[List["Share"]] = relationship("Share", back_populates="collection", cascade="all, delete-orphan")
 
 

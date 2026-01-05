@@ -1,11 +1,13 @@
 "use client";
 
+import { useRef, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { AssetCard } from "./asset-card";
 import { DragSelect } from "@/components/ui/drag-select";
 import { AssetGridSkeleton } from "@/components/ui/skeleton";
 import type { Asset } from "@/lib/api";
 import { useAppStore } from "@/store";
+import toast from "react-hot-toast";
 
 interface AssetGridProps {
   assets: Asset[];
@@ -28,7 +30,48 @@ export function AssetGrid({
   onAssetMoveToVault,
   actionRenderer,
 }: AssetGridProps) {
-  const { selectedAssets, toggleAssetSelection, setSelectedAssets, setBatchMode, batchMode } = useAppStore();
+  const {
+    selectedAssets,
+    toggleAssetSelection,
+    setSelectedAssets,
+    setBatchMode,
+    batchMode,
+    clearSelection
+  } = useAppStore();
+
+  const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
+
+  // Ctrl+A & Esc Hotkeys
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Avoid triggering when user is typing in inputs
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      // Ctrl + A (or Cmd + A)
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        e.preventDefault();
+        if (assets.length > 0) {
+          const allIds = assets.map(a => a.id);
+          setSelectedAssets(allIds);
+          setBatchMode(true);
+          toast.success(`已全选 ${allIds.length} 项资源`, {
+            id: 'select-all-toast', // Avoid duplicates
+            icon: '✅',
+          });
+        }
+      }
+
+      // Esc
+      if (e.key === 'Escape') {
+        clearSelection();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [assets, setSelectedAssets, setBatchMode, clearSelection]);
 
   const handleDragSelection = (indices: number[]) => {
     const selectedIds = indices.map(index => assets[index].id);
@@ -36,6 +79,30 @@ export function AssetGrid({
       setBatchMode(true);
     }
     setSelectedAssets(selectedIds);
+  };
+
+  const handleAssetClick = (asset: Asset, index: number, e: React.MouseEvent) => {
+    // Range selection with Shift
+    if (e.shiftKey && lastSelectedIndex !== null && assets.length > 0) {
+      e.preventDefault();
+      const start = Math.min(lastSelectedIndex, index);
+      const end = Math.max(lastSelectedIndex, index);
+      const rangeIds = assets.slice(start, end + 1).map(a => a.id);
+
+      // Calculate union of existing selection and new range
+      const newSelection = Array.from(new Set([...selectedAssets, ...rangeIds]));
+      setSelectedAssets(newSelection);
+      if (!batchMode) setBatchMode(true);
+      return;
+    }
+
+    setLastSelectedIndex(index);
+
+    if (batchMode) {
+      toggleAssetSelection(asset.id);
+    } else {
+      onAssetClick?.(asset);
+    }
   };
 
   if (loading) {
@@ -75,7 +142,7 @@ export function AssetGrid({
   return (
     <DragSelect onSelectionChange={handleDragSelection} className="asset-grid">
       <AnimatePresence mode="popLayout">
-        {assets.map((asset) => (
+        {assets.map((asset, index) => (
           <AssetCard
             key={asset.id}
             asset={asset}
@@ -84,7 +151,7 @@ export function AssetGrid({
               if (!batchMode) setBatchMode(true);
               toggleAssetSelection(asset.id);
             }}
-            onClick={() => onAssetClick?.(asset)}
+            onClick={(e: React.MouseEvent) => handleAssetClick(asset, index, e)}
             onEdit={() => onAssetEdit?.(asset)}
             onDelete={() => onAssetDelete?.(asset)}
             onShare={() => onAssetShare?.(asset)}

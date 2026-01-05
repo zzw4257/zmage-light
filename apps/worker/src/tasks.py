@@ -16,9 +16,7 @@ from qdrant_client.models import Filter, FieldCondition, MatchValue
 from src.config import settings
 
 # 同步数据库引擎 (Worker 使用同步方式)
-print(f"DEBUG: settings.database_url = {settings.database_url}")
 sync_database_url = settings.database_url.replace("+asyncpg", "+psycopg2")
-print(f"DEBUG: sync_database_url = {sync_database_url}")
 engine = create_engine(sync_database_url)
 SessionLocal = sessionmaker(bind=engine)
 
@@ -64,6 +62,7 @@ class Asset(Base):
     file_path = Column(String(255))
     thumbnail_path = Column(String(255))
     vector_id = Column(String(64))
+    user_id = Column(Integer)
 
 
 class Album(Base):
@@ -80,6 +79,7 @@ class Album(Base):
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     deleted_at = Column(DateTime(timezone=True))
+    user_id = Column(Integer)
 
 
 class SystemConfig(Base):
@@ -99,8 +99,8 @@ album_assets = Table(
     Base.metadata,
     Column("album_id", Integer, ForeignKey("albums.id"), primary_key=True),
     Column("asset_id", Integer, ForeignKey("assets.id"), primary_key=True),
-    Column("order", Integer, default=0),
-    Column("added_at", DateTime(timezone=True), default=datetime.utcnow),
+    Column("position", Integer, default=0),
+    Column("created_at", DateTime(timezone=True), default=datetime.utcnow),
 )
 
 # 集合资产关联表
@@ -109,7 +109,7 @@ collection_assets = Table(
     Base.metadata,
     Column("collection_id", Integer, ForeignKey("collections.id"), primary_key=True),
     Column("asset_id", Integer, ForeignKey("assets.id"), primary_key=True),
-    Column("added_at", DateTime(timezone=True), default=datetime.utcnow),
+    Column("created_at", DateTime(timezone=True), default=datetime.utcnow),
 )
 
 class Collection(Base):
@@ -197,6 +197,7 @@ async def album_suggestion_task():
                 "tags": a.tags or [],
                 "created_at": a.created_at.isoformat() if a.created_at else None,
                 "location": a.location,
+                "user_id": a.user_id,
             })
         
         # 调用 Gemini 生成建议
@@ -210,6 +211,8 @@ async def album_suggestion_task():
         created_count = 0
         for suggestion in suggestions:
             asset_ids = suggestion.get("asset_ids", [])
+            # Create a map for quick access
+            assets_map = {a.id: a for a in assets}
             if len(asset_ids) < 3:
                 continue
             
@@ -227,6 +230,7 @@ async def album_suggestion_task():
                 status=AlbumStatus.PENDING,
                 suggestion_reason=suggestion.get("reason"),
                 suggestion_score=suggestion.get("confidence", 0.5),
+                user_id=assets_map[valid_ids[0]].user_id,
             )
             db.add(album)
             db.flush()
@@ -314,7 +318,7 @@ async def generate_album_suggestions(
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash-preview-05-20",
+            model="gemini-2.5-flash",
             contents=prompt
         )
         

@@ -11,7 +11,7 @@ Zmage 是一个现代化的数字资产管理系统，专为创意团队和个�
 ### 核心功能
 
 - **多视图浏览**: 支持网格 (Grid)、列表 (List) 和瀑布流 (Waterfall) 视图切，满足不同浏览需求
-- **批量管理**: 强大的多选模式，支持批量删除、加入相册、下载和打标签
+- **批量管理**: 强大的多选模式，支持批量删除、加入相册、下载和打标签。新增 **Ctrl+A** (全选)、**Shift+点击** (范围选) 等便捷手势及 UI 提示引导。
 - **足迹地图**: 交互式地理足迹地图，自动提取照片 GPS 信息，以聚类和缩略图形式展示您的足迹
 - **资产管理**: 支持图片、视频、文档等多种格式，自动生成缩略图和预览
 - **文件夹结构**: 保持原始文件夹层级，支持虚拟文件夹组织
@@ -45,14 +45,14 @@ Zmage 是一个现代化的数字资产管理系统，专为创意团队和个�
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                        前端 (Next.js 14)                      │
-│                        端口: 2333                             │
+│                        前端 (Next.js 16)                      │
+│                        端口: 32333                             │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                      API 后端 (FastAPI)                       │
-│                        端口: 4257                             │
+│                        端口: 34257                             │
 └─────────────────────────────────────────────────────────────┘
                               │
         ┌─────────────────────┼─────────────────────┐
@@ -69,30 +69,35 @@ Zmage 是一个现代化的数字资产管理系统，专为创意团队和个�
                      └───────────────┘
 ```
 
-## 快速开始
+## 🚀 快速开始
 
-### 环境要求
+只需两步即可启动完整系统：
 
-- Docker & Docker Compose
-- Node.js 18+ (开发环境)
-- Python 3.11+ (开发环境)
-
-### 使用 Docker 启动
-
+### 1. 准备环境
 ```bash
-# 克隆项目
 git clone <repository-url>
 cd zmage
-
-# 复制环境变量配置
-cp .env.example .env
-
-# 编辑 .env 文件，配置必要的环境变量
-# 特别是 GEMINI_API_KEY
-
-# 启动所有服务
-./scripts/start.sh
+cp .env.example .env  # 填入您的 GEMINI_API_KEY
 ```
+
+### 2. 一键启动
+```bash
+docker compose up -d
+```
+
+**访问地址**:
+- 前端界面: [http://localhost:32333](http://localhost:32333)
+- API 文档: [http://localhost:34257/docs](http://localhost:34257/docs)
+
+---
+
+## 🛠️ 进阶开发 (可选)
+
+如果您需要更高级的控制，可以使用内置脚本：
+
+- **一键构建并启动**: `./scripts/start.sh --build`
+- **带颜色的日志查看**: `./scripts/start.sh --follow`
+- **启动基础开发环境**: `./scripts/dev.sh` (仅启动数据库等基础设施)
 
 ### 开发环境
 
@@ -105,7 +110,7 @@ cp .env.example .env
 # 终端 1: API 服务器
 cd apps/api
 pip install -r requirements.txt
-uvicorn src.main:app --reload --port 4257
+uvicorn src.main:app --reload --port 34257
 
 # 终端 2: Worker 服务
 cd apps/worker
@@ -120,9 +125,10 @@ pnpm dev
 
 ### 访问地址
 
-- 前端界面: http://localhost:2333
-- API 文档: http://localhost:4257/docs
-- MinIO 控制台: http://localhost:9001
+- 前端界面: http://localhost:32333
+- API 文档: http://localhost:34257/docs
+- MinIO 控制台: http://localhost:30901
+- Qdrant 控制台: http://localhost:30333/dashboard
 
 ## 项目结构
 
@@ -171,7 +177,7 @@ zmage/
 
 ## API 文档
 
-启动服务后，访问 http://localhost:4257/docs 查看完整的 API 文档。
+启动服务后，访问 http://localhost:34257/docs 查看完整的 API 文档。
 
 ### 主要接口
 

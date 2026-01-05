@@ -39,17 +39,14 @@ def create_scheduler() -> AsyncIOScheduler:
 
 async def main():
     """主函数"""
-    print("DEBUG: Entering main()")
-    print("=" * 50)
     print("Zmage Worker 启动")
     print(f"时间: {datetime.now().isoformat()}")
     print("=" * 50)
     
-    print("DEBUG: Creating scheduler...")
     scheduler = create_scheduler()
-    print("DEBUG: Starting scheduler...")
+    print("正在启动调度器...")
     scheduler.start()
-    print("DEBUG: Scheduler started")
+    print("调度器已启动")
     
     print("\n已注册的定时任务:")
     for job in scheduler.get_jobs():
