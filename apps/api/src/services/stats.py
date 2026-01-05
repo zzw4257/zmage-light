@@ -62,8 +62,8 @@ class StatsService:
             "summary": {
                 "total_assets": total_assets,
                 "total_albums": total_albums,
-                "total_size": total_size,
-                "usage_gb": round(total_size / (1024**3), 2)
+                "total_size": int(total_size),
+                "usage_gb": float(round(total_size / (1024**3), 2))
             },
             "distributions": {
                 "asset_types": type_distribution,
