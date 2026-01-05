@@ -16,10 +16,11 @@ import {
     ArrowBigRightDash,
     Sparkles,
     Palette,
+    History as HistoryIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { type Asset, getStorageUrl, assetsApi, type AssetAIEdit } from "@/lib/api";
+import { type Asset, getStorageUrl, assetsApi, type AssetAIEdit, type AssetVersion } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import toast from "react-hot-toast";
 
@@ -30,13 +31,12 @@ interface AssetEditorProps {
 }
 
 const FILTERS = [
-    { name: "原图", filter: "none" },
-    { name: "极简黑白", filter: "grayscale(100%) contrast(120%)" },
-    { name: "胶片复古", filter: "sepia(50%) contrast(110%) saturate(80%)" },
-    { name: "鲜明冷调", filter: "hue-rotate(180deg) saturate(150%) brightness(110%)" },
-    { name: "高雅暖调", filter: "sepia(30%) saturate(140%) contrast(110%)" },
-    { name: "赛博朋克", filter: "hue-rotate(280deg) contrast(130%) saturate(200%)" },
-    { name: "柔和", filter: "brightness(110%) contrast(90%) saturate(110%) blur(0.5px)" },
+    { id: "none", name: "原图", filter: "none" },
+    { id: "grayscale", name: "极简黑白", filter: "grayscale(100%) contrast(120%)" },
+    { id: "retro", name: "胶片复古", filter: "sepia(50%) contrast(110%) saturate(80%)" },
+    { id: "cold", name: "鲜明冷调", filter: "hue-rotate(180deg) saturate(150%) brightness(110%)" },
+    { id: "warm", name: "高雅暖调", filter: "sepia(30%) saturate(140%) contrast(110%)" },
+    { id: "cyber", name: "赛博朋克", filter: "hue-rotate(280deg) contrast(130%) saturate(200%)" },
 ];
 
 const AI_STYLES = [
@@ -49,9 +49,11 @@ const AI_STYLES = [
 ];
 
 export function AssetEditor({ asset, onClose, onSuccess }: AssetEditorProps) {
-    const [activeTab, setActiveTab] = useState<"adjust" | "crop" | "filter" | "ai">("adjust");
+    const [activeTab, setActiveTab] = useState<"adjust" | "crop" | "filter" | "ai" | "history">("adjust");
     const [isProcessing, setIsProcessing] = useState(false);
     const [showOriginal, setShowOriginal] = useState(false);
+    const [versions, setVersions] = useState<AssetVersion[]>([]);
+    const [isLoadingVersions, setIsLoadingVersions] = useState(false);
 
     // Edit States
     const [crop, setCrop] = useState<Crop>();
@@ -76,6 +78,38 @@ export function AssetEditor({ asset, onClose, onSuccess }: AssetEditorProps) {
 
     const imgRef = useRef<HTMLImageElement>(null);
     const imageUrl = asset.url || getStorageUrl(asset.file_path);
+
+    useEffect(() => {
+        if (activeTab === "history") {
+            loadVersions();
+        }
+    }, [activeTab]);
+
+    const loadVersions = async () => {
+        try {
+            setIsLoadingVersions(true);
+            const response = await assetsApi.getVersions(asset.id);
+            setVersions(response.data);
+        } catch (error) {
+            toast.error("加载版本历史失败");
+        } finally {
+            setIsLoadingVersions(false);
+        }
+    };
+
+    const handleRestoreVersion = async (versionId: number) => {
+        try {
+            setIsProcessing(true);
+            const response = await assetsApi.restoreVersion(asset.id, versionId);
+            toast.success("已恢复到选定版本");
+            onSuccess(response.data);
+            onClose();
+        } catch (error) {
+            toast.error("恢复版本失败");
+        } finally {
+            setIsProcessing(false);
+        }
+    };
 
     // Helper: Reset all edits
     const handleReset = () => {
@@ -103,13 +137,19 @@ export function AssetEditor({ asset, onClose, onSuccess }: AssetEditorProps) {
                 prompt: aiPrompt,
                 style: aiStyle,
                 aspect_ratio: aiAspectRatio,
-                save_as_new: true, // AI 生成倾向于保存副本
+                save_as_new: false, // 改为版本控制模式，以便在历史记录中看到
             };
 
             const response = await assetsApi.aiEdit(asset.id, data);
             toast.success("AI 生成成功（已保存为副本）");
+
+            // 触发回显：刷新历史记录并跳转
+            loadVersions();
+            setActiveTab("history");
+
+            // 通知父组件有新资产（可选，副本模式下父组件通常需要刷新列表）
             onSuccess(response.data);
-            onClose();
+            // 不再直接 onClose()，让用户可以在历史中看到结果并决定是否恢复/继续
         } catch (error: any) {
             toast.error(error.response?.data?.detail || "AI 处理失败");
         } finally {
@@ -162,18 +202,9 @@ export function AssetEditor({ asset, onClose, onSuccess }: AssetEditorProps) {
                 ops.push({ type: "adjust", params: adjustParams });
             }
 
-            // 4. Filters (Simplified)
-            // 如果 activeFilter 不是 none，我们目前无法在后端精确复现复杂 CSS filter
-            // TODO: 将 filter string 解析为 adjustments 或者后端支持 lookup table
+            // 4. Filters (Filter Lab)
             if (activeFilter !== 'none') {
-                // 这是一个 limitation warning
-                console.warn("Complex CSS filters are preview-only for now unless backend supports them.");
-                // Workaround: Map some basic filters to adjustments if possible
-                if (activeFilter.includes("grayscale")) adjustParams.saturation = 0;
-                if (activeFilter.includes("sepia")) {
-                    // Sepia generally implies some color matrix, backend needs generic ColorMatrix support in Pillow
-                    // For robustness, we skip complex filters in backend or user accepts it's 'preview only' unless we add backend code
-                }
+                ops.push({ type: "filter", params: { name: activeFilter } });
             }
 
             const response = await assetsApi.edit(asset.id, {
@@ -199,7 +230,7 @@ export function AssetEditor({ asset, onClose, onSuccess }: AssetEditorProps) {
         maxHeight: "80vh",
         maxWidth: "100%",
     } : {
-        filter: `brightness(${adjustments.brightness}%) contrast(${adjustments.contrast}%) saturate(${adjustments.saturation}%) blur(${adjustments.blur}px) ${activeFilter !== 'none' ? activeFilter : ''}`,
+        filter: `brightness(${adjustments.brightness}%) contrast(${adjustments.contrast}%) saturate(${adjustments.saturation}%) blur(${adjustments.blur}px) ${activeFilter !== 'none' ? (FILTERS.find(f => f.id === activeFilter)?.filter || '') : ''}`,
         transform: `rotate(${totalRotation}deg)`,
         transition: "transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1), filter 0.2s ease",
         maxHeight: "80vh",
@@ -309,6 +340,7 @@ export function AssetEditor({ asset, onClose, onSuccess }: AssetEditorProps) {
                             { id: "crop", icon: CropIcon, label: "裁剪" },
                             { id: "filter", icon: Palette, label: "滤镜" },
                             { id: "ai", icon: Sparkles, label: "AI 魔法" },
+                            { id: "history", icon: HistoryIcon, label: "历史" },
                         ].map((tab) => (
                             <button
                                 key={tab.id}
@@ -409,10 +441,10 @@ export function AssetEditor({ asset, onClose, onSuccess }: AssetEditorProps) {
                                 {FILTERS.map(f => (
                                     <button
                                         key={f.name}
-                                        onClick={() => setActiveFilter(f.filter)}
+                                        onClick={() => setActiveFilter(f.id)}
                                         className={cn(
                                             "aspect-square rounded-xl overflow-hidden relative border-2 transition-all group duration-300",
-                                            activeFilter === f.filter ? "border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.5)] scale-[1.02]" : "border-transparent hover:border-white/30"
+                                            activeFilter === f.id ? "border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.5)] scale-[1.02]" : "border-transparent hover:border-white/30"
                                         )}
                                     >
                                         <img
@@ -424,7 +456,7 @@ export function AssetEditor({ asset, onClose, onSuccess }: AssetEditorProps) {
                                         <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 pt-6 text-[10px] font-medium text-left">
                                             {f.name}
                                         </div>
-                                        {activeFilter === f.filter && (
+                                        {activeFilter === f.id && (
                                             <div className="absolute top-2 right-2 bg-blue-500 rounded-full p-0.5">
                                                 <Check className="h-2 w-2 text-white" />
                                             </div>
@@ -500,6 +532,62 @@ export function AssetEditor({ asset, onClose, onSuccess }: AssetEditorProps) {
 
                                 <p className="text-[9px] text-white/30 text-center px-2">
                                     * AI 生成大约需要 10-30 秒，结果将作为副本保存到您的库中
+                                </p>
+                            </div>
+                        )}
+
+                        {activeTab === "history" && (
+                            <div className="space-y-4 animate-in slide-in-from-right-4 duration-300">
+                                <h3 className="text-xs font-medium text-white/50 uppercase tracking-wider">版本历史 (Checkpoints)</h3>
+
+                                {isLoadingVersions ? (
+                                    <div className="flex flex-col items-center justify-center py-12 gap-3 opacity-50">
+                                        <div className="w-6 h-6 border-2 border-white/20 border-t-white/80 rounded-full animate-spin" />
+                                        <span className="text-[10px]">加载中...</span>
+                                    </div>
+                                ) : versions.length === 0 ? (
+                                    <div className="text-center py-12 text-white/20 text-xs italic">
+                                        尚无历史版本记录
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {versions.map((v) => (
+                                            <div key={v.id} className="group relative bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-3 transition-all">
+                                                <div className="flex gap-3">
+                                                    <div className="w-16 h-16 rounded-md overflow-hidden bg-black/40 flex-shrink-0">
+                                                        <img src={getStorageUrl(v.file_path)} className="w-full h-full object-cover" alt={`v${v.version_number}`} />
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex justify-between items-start">
+                                                            <span className="text-[10px] font-bold text-blue-400">VERSION {v.version_number}</span>
+                                                            {v.version_number === (versions[0]?.version_number) && (
+                                                                <span className="text-[8px] bg-blue-500/20 text-blue-400 px-1.5 rounded uppercase">Current</span>
+                                                            )}
+                                                        </div>
+                                                        <div className="text-[10px] text-white/70 mt-1 line-clamp-1">{v.note || '编辑保存'}</div>
+                                                        <div className="text-[9px] text-white/30 mt-1">
+                                                            {new Date(v.created_at).toLocaleString()}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="mt-3 flex gap-2 overflow-hidden h-0 group-hover:h-8 transition-all">
+                                                    <Button
+                                                        size="sm"
+                                                        variant="secondary"
+                                                        className="flex-1 h-7 text-[10px] bg-white/10 hover:bg-white/20 border-0"
+                                                        onClick={() => handleRestoreVersion(v.id)}
+                                                        disabled={isProcessing}
+                                                    >
+                                                        恢复此版本
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                <p className="text-[9px] text-white/20 mt-4 leading-relaxed">
+                                    * 每次点击“保存”都会创建一个新的 Checkpoint。您可以随时回显并恢复到任何历史节点。
                                 </p>
                             </div>
                         )}

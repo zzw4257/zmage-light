@@ -7,6 +7,7 @@ import { Loader2, Map as MapIcon, Compass, Layers, Maximize2 } from "lucide-reac
 import { Button } from "@/components/ui/button";
 import { getStorageUrl } from "@/lib/api";
 import Script from "next/script";
+import { ImmersiveViewer } from "./immersive-viewer";
 
 // 由于 npm install 受限，我们使用 CDN 版本的 Leaflet
 export default function MapView() {
@@ -46,6 +47,10 @@ export default function MapView() {
         setLeafletLoaded(true);
     };
 
+    const [viewingAsset, setViewingAsset] = useState<any>(null); // Asset type
+
+    // ... (previous code)
+
     useEffect(() => {
         if (leafletLoaded && mapAssets) {
             updateMarkers();
@@ -64,7 +69,7 @@ export default function MapView() {
 
                 const icon = L.divIcon({
                     html: `
-            <div class="relative group">
+            <div class="relative group cursor-pointer">
               <div class="w-10 h-10 rounded-full border-2 border-white shadow-lg overflow-hidden transition-transform hover:scale-110 hover:z-10 bg-white">
                 <img src="${imageUrl}" class="w-full h-full object-cover" />
               </div>
@@ -78,16 +83,25 @@ export default function MapView() {
 
                 const marker = L.marker([asset.latitude, asset.longitude], { icon });
 
-                const popupContent = `
+                const popupContent = document.createElement("div");
+                popupContent.innerHTML = `
           <div class="p-1 min-w-[200px] font-sans">
-            <div class="aspect-video rounded-lg overflow-hidden mb-2 shadow-sm bg-gray-100">
+            <div class="aspect-video rounded-lg overflow-hidden mb-2 shadow-sm bg-gray-100 cursor-pointer asset-preview-trigger">
               <img src="${getStorageUrl(asset.file_path)}" class="w-full h-full object-cover" />
             </div>
             <h4 class="font-bold text-sm mb-1 truncate">${asset.title || asset.original_filename}</h4>
             <div class="text-[10px] text-gray-500 mb-2">${asset.location || "未知位置"}</div>
-            <a href="/assets/${asset.id}" class="text-blue-500 text-xs font-medium hover:underline">查看详情</a>
+            <button class="text-blue-500 text-xs font-medium hover:underline view-details-btn">查看详情</button>
           </div>
         `;
+
+                // 绑定事件
+                const triggerPreview = () => {
+                    setViewingAsset(asset);
+                };
+
+                popupContent.querySelector(".asset-preview-trigger")?.addEventListener("click", triggerPreview);
+                popupContent.querySelector(".view-details-btn")?.addEventListener("click", triggerPreview);
 
                 marker.bindPopup(popupContent, {
                     className: "custom-leaflet-popup",
@@ -98,7 +112,6 @@ export default function MapView() {
             }
         });
 
-        // 如果有资产，自动调整视野
         if (mapAssets.length > 0) {
             const coords = mapAssets
                 .filter(a => a.latitude && a.longitude)
@@ -134,6 +147,34 @@ export default function MapView() {
             )}
 
             <div ref={mapRef} className="w-full h-full z-0" />
+
+            {/* Immersive Viewer */}
+            {viewingAsset && mapAssets && (
+                <div className="absolute inset-0 z-[3000] bg-black">
+                    <ImmersiveViewer
+                        src={getStorageUrl(viewingAsset.file_path)}
+                        alt={viewingAsset.title || viewingAsset.original_filename}
+                        mimeType={viewingAsset.mime_type}
+                        onClose={() => setViewingAsset(null)}
+                        onPrev={() => {
+                            const idx = mapAssets.findIndex(a => a.id === viewingAsset.id);
+                            if (idx !== -1) {
+                                const prevIdx = (idx - 1 + mapAssets.length) % mapAssets.length;
+                                setViewingAsset(mapAssets[prevIdx]);
+                            }
+                        }}
+                        onNext={() => {
+                            const idx = mapAssets.findIndex(a => a.id === viewingAsset.id);
+                            if (idx !== -1) {
+                                const nextIdx = (idx + 1) % mapAssets.length;
+                                setViewingAsset(mapAssets[nextIdx]);
+                            }
+                        }}
+                        hasPrev={mapAssets.length > 1}
+                        hasNext={mapAssets.length > 1}
+                    />
+                </div>
+            )}
 
             {/* 顶部控制栏 */}
             <div className="absolute top-6 left-6 z-[1000] flex gap-2">

@@ -165,7 +165,7 @@ async def move_out_vault(
     return {"message": "已移出保险库"}
 
 
-@router.post("/check-status", summary="检查保险库状态")
+@router.get("/check-status", summary="检查保险库状态")
 async def check_vault_status(
     user: User = Depends(get_current_user_with_vault),
 ):

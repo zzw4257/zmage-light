@@ -159,9 +159,7 @@ export function Sidebar({ mobile, onClose }: { mobile?: boolean; onClose?: () =>
         {mobile && (
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-                <span className="text-white font-bold text-sm">Z</span>
-              </div>
+              <img src="/logo-icon.png" alt="Zmage Logo" className="w-8 h-8 rounded-lg" />
               <span className="font-semibold text-lg">Zmage</span>
             </div>
             <Button variant="ghost" size="icon" onClick={onClose}>

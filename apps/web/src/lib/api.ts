@@ -84,6 +84,19 @@ export interface Asset {
   thumbnail_url: string | null;
 }
 
+export interface AssetVersion {
+  id: number;
+  asset_id: number;
+  version_number: number;
+  file_path: string;
+  file_size: number;
+  file_hash: string;
+  parameters: Record<string, any> | null;
+  note: string | null;
+  created_at: string;
+  url: string | null;
+}
+
 export interface ProcessingAsset {
   id: number;
   filename: string;
@@ -231,6 +244,7 @@ export interface AssetAIEdit {
   negative_prompt?: string;
   style?: string;
   aspect_ratio?: string;
+  image_size?: string;
   save_as_new?: boolean;
 }
 
@@ -312,6 +326,10 @@ export const assetsApi = {
   },
 
   listProcessing: () => api.get<ProcessingAsset[]>("/assets/processing"),
+
+  getVersions: (id: number) => api.get<AssetVersion[]>(`/assets/${id}/versions`),
+  restoreVersion: (assetId: number, versionId: number) =>
+    api.post<Asset>(`/assets/${assetId}/versions/${versionId}/restore`),
 
   uploadToPortal: (code: string, file: File) => {
     const formData = new FormData();
@@ -439,6 +457,9 @@ export const collectionsApi = {
 
   removeAssets: (id: number, assetIds: number[]) =>
     api.delete(`/collections/${id}/assets`, { data: assetIds }),
+
+  download: (id: number) =>
+    api.get(`/collections/${id}/download`, { responseType: "blob" }),
 };
 
 export const sharesApi = {
@@ -456,7 +477,7 @@ export const sharesApi = {
     api.get(`/shares/${shareCode}`, { params: { password } }),
 
   getByCode: (code: string, password?: string) =>
-    api.get<{ share: Share; assets: Asset[] }>(`/s/${code}`, { params: { password } }),
+    api.get<{ share: Share; assets: Asset[] }>(`/shares/${code}`, { params: { password } }),
 
   getPortal: (code: string) =>
     api.get<{ name?: string; description?: string; allowed_types?: string[]; max_file_size?: number }>(`/portal/${code}`),

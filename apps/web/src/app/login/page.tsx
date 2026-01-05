@@ -56,6 +56,7 @@ export default function LoginPage() {
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: 0.3 }}
                         >
+                            <img src="/logo-icon.png" alt="Zmage Logo" className="w-16 h-16 mx-auto mb-4 rounded-2xl shadow-2xl" />
                             <CardTitle className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-white/50">
                                 Zmage
                             </CardTitle>

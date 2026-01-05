@@ -81,9 +81,7 @@ export function Header({ onUploadClick, onAIChatClick }: HeaderProps) {
           className="flex items-center gap-2 cursor-pointer"
           onClick={() => router.push("/")}
         >
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-            <span className="text-white font-bold text-sm">Z</span>
-          </div>
+          <img src="/logo-icon.png" alt="Zmage Logo" className="w-8 h-8 rounded-lg" />
           <span className="hidden md:block font-semibold text-lg">Zmage</span>
         </div>
 

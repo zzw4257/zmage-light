@@ -49,6 +49,11 @@ if [ ! -f ".env" ]; then
     echo -e "${YELLOW}📝 请编辑 .env 文件配置必要的环境变量 (特别是 GEMINI_API_KEY)${NC}"
 fi
 
+# 加载环境变量
+set -a
+source .env 2>/dev/null || true
+set +a
+
 # 解析参数
 BUILD_FLAG=""
 DETACH_FLAG="-d"
@@ -107,10 +112,10 @@ if [ -n "$DETACH_FLAG" ]; then
     echo -e "${GREEN}✅ 启动完成！${NC}"
     echo ""
     echo -e "${CYAN}🌐 访问地址:${NC}"
-    echo -e "   - 前端:     ${GREEN}http://localhost:32333${NC}"
-    echo -e "   - API:      ${GREEN}http://localhost:34257${NC}"
-    echo -e "   - API 文档: ${GREEN}http://localhost:34257/docs${NC}"
-    echo -e "   - MinIO:    ${GREEN}http://localhost:30901${NC} (admin / zmage_minio_secret)"
+    echo -e "   - 前端:     ${GREEN}http://localhost:${WEB_PORT:-32333}${NC}"
+    echo -e "   - API:      ${GREEN}http://localhost:${API_PORT:-34257}${NC}"
+    echo -e "   - API 文档: ${GREEN}http://localhost:${API_PORT:-34257}/docs${NC}"
+    echo -e "   - MinIO:    ${GREEN}http://localhost:30901${NC} (${S3_ACCESS_KEY:-minioadmin} / ${S3_SECRET_KEY:-minioadmin})"
     echo ""
     echo -e "${CYAN}📝 常用命令:${NC}"
     echo "   - 查看日志: $COMPOSE_CMD logs -f [服务名]"
@@ -119,8 +124,8 @@ if [ -n "$DETACH_FLAG" ]; then
     echo "   - 重建前端: $COMPOSE_CMD up -d --build img-lib-web"
     echo ""
     echo -e "${CYAN}🏷️  端口映射:${NC}"
-    echo "   - 前端 (Next.js):  32333"
-    echo "   - API (FastAPI):   34257"
+    echo "   - 前端 (Next.js):  ${WEB_PORT:-32333}"
+    echo "   - API (FastAPI):   ${API_PORT:-34257}"
     echo "   - PostgreSQL:      30432"
     echo "   - Redis:           30379"
     echo "   - Qdrant:          30333"

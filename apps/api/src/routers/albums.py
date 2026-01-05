@@ -9,10 +9,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, insert, delete
+from sqlalchemy.orm import selectinload
+
 
 from src.models import get_db, Album, Asset, AlbumType, AlbumStatus, album_assets
 from src.schemas import (
-    AlbumCreate, AlbumUpdate, AlbumResponse, AlbumDetailResponse, SuggestedAlbumResponse,
+    AlbumCreate, AlbumUpdate, AlbumResponse, AlbumDetailResponse, SuggestedAlbumResponse, AssetResponse,
 )
 from src.services import storage_service
 
@@ -52,7 +54,7 @@ async def list_albums(
     db: AsyncSession = Depends(get_db),
 ):
     """获取相册列表"""
-    query = select(Album).where(Album.user_id == current_user.id)
+    query = select(Album).options(selectinload(Album.cover_asset)).where(Album.user_id == current_user.id)
     
     if album_type:
         query = query.where(Album.album_type == album_type)
@@ -155,7 +157,7 @@ async def list_album_suggestions(
     db: AsyncSession = Depends(get_db),
 ):
     """获取 AI 生成的相册建议"""
-    query = select(Album).where(
+    query = select(Album).options(selectinload(Album.cover_asset)).where(
         Album.user_id == current_user.id,
         Album.album_type == AlbumType.SUGGESTED,
         Album.status == AlbumStatus.PENDING,
@@ -254,7 +256,12 @@ async def get_album(
     db: AsyncSession = Depends(get_db),
 ):
     """获取相册详情"""
-    album = await db.get(Album, album_id)
+    # 使用 select + selectinload 替代 get 以确保预加载关联
+    result = await db.execute(
+        select(Album).options(selectinload(Album.cover_asset)).where(Album.id == album_id)
+    )
+    album = result.scalar_one_or_none()
+    
     if not album or album.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="相册不存在")
     
@@ -263,7 +270,7 @@ async def get_album(
         select(Asset).join(album_assets).where(
             album_assets.c.album_id == album_id,
             VisibilityHelper.active_assets()
-        ).order_by(album_assets.c.order)
+        ).order_by(album_assets.c.position)
     )
     assets = result.scalars().all()
     
@@ -298,7 +305,11 @@ async def update_album(
     db: AsyncSession = Depends(get_db),
 ):
     """更新相册信息"""
-    album = await db.get(Album, album_id)
+    result = await db.execute(
+        select(Album).options(selectinload(Album.cover_asset)).where(Album.id == album_id)
+    )
+    album = result.scalar_one_or_none()
+
     if not album or album.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="相册不存在")
     
@@ -340,6 +351,32 @@ async def delete_album(
     await db.commit()
     
     return {"message": "删除成功"}
+
+
+@router.get("/{album_id}/assets", response_model=List[AssetResponse], summary="获取相册内资产列表")
+async def get_album_assets(
+    album_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取相册内的资产列表"""
+    from src.utils.security import VisibilityHelper
+    from src.routers.assets import asset_to_response
+    from src.schemas import AssetResponse
+    
+    album = await db.get(Album, album_id)
+    if not album or album.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="相册不存在")
+    
+    result = await db.execute(
+        select(Asset).join(album_assets).where(
+            album_assets.c.album_id == album_id,
+            VisibilityHelper.active_assets()
+        ).order_by(album_assets.c.position)
+    )
+    assets = result.scalars().all()
+    
+    return [asset_to_response(a) for a in assets]
 
 
 @router.post("/{album_id}/assets", summary="添加资产到相册")
@@ -402,7 +439,11 @@ async def accept_album_suggestion(
     db: AsyncSession = Depends(get_db),
 ):
     """接受 AI 相册建议"""
-    album = await db.get(Album, album_id)
+    result = await db.execute(
+        select(Album).options(selectinload(Album.cover_asset)).where(Album.id == album_id)
+    )
+    album = result.scalar_one_or_none()
+    
     if not album:
         raise HTTPException(status_code=404, detail="相册不存在")
     
@@ -429,7 +470,11 @@ async def ignore_album_suggestion(
     db: AsyncSession = Depends(get_db),
 ):
     """忽略 AI 相册建议"""
-    album = await db.get(Album, album_id)
+    result = await db.execute(
+        select(Album).options(selectinload(Album.cover_asset)).where(Album.id == album_id)
+    )
+    album = result.scalar_one_or_none()
+    
     if not album:
         raise HTTPException(status_code=404, detail="相册不存在")
     

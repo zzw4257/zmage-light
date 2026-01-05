@@ -27,12 +27,12 @@ TOOLS = [
         name="search_assets",
         description="使用自然语言搜索图片和视频，支持按标题、描述、标签、位置和视觉特征检索。",
         input_schema={
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
-                "query": {"type": "string", "description": "搜索查询词"},
-                "limit": {"type": "integer", "description": "返回结果数量", "default": 10},
-                "folder_id": {"type": "integer", "description": "限制在特定文件夹内"},
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "限制特定标签"}
+                "query": {"type": "STRING", "description": "搜索查询词"},
+                "limit": {"type": "INTEGER", "description": "返回结果数量", "default": 10},
+                "folder_id": {"type": "INTEGER", "description": "限制在特定文件夹内"},
+                "tags": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "限制特定标签"}
             },
             "required": ["query"]
         }
@@ -41,11 +41,11 @@ TOOLS = [
         name="list_assets",
         description="列出所有资产，支持按类型、文件夹、状态筛选。",
         input_schema={
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
-                "asset_type": {"type": "string", "enum": ["image", "video", "document"], "description": "资产类型"},
-                "folder_id": {"type": "integer", "description": "文件夹 ID"},
-                "limit": {"type": "integer", "description": "返回数量", "default": 20}
+                "asset_type": {"type": "STRING", "enum": ["image", "video", "document"], "description": "资产类型"},
+                "folder_id": {"type": "INTEGER", "description": "文件夹 ID"},
+                "limit": {"type": "INTEGER", "description": "返回数量", "default": 20}
             }
         }
     ),
@@ -53,9 +53,9 @@ TOOLS = [
         name="get_asset_details",
         description="获取单个资产的详细元数据，包括标题、描述、标签、拍摄时间、地点、相机参数等。",
         input_schema={
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
-                "asset_id": {"type": "integer", "description": "资产唯一标识 ID"}
+                "asset_id": {"type": "INTEGER", "description": "资产唯一标识 ID"}
             },
             "required": ["asset_id"]
         }
@@ -64,12 +64,12 @@ TOOLS = [
         name="update_asset",
         description="更新资产的元数据，如修改标题、增加描述、修改标签等。",
         input_schema={
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
-                "asset_id": {"type": "integer", "description": "资产 ID"},
-                "title": {"type": "string", "description": "新标题"},
-                "description": {"type": "string", "description": "新描述"},
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "全量覆盖标签列表"}
+                "asset_id": {"type": "INTEGER", "description": "资产 ID"},
+                "title": {"type": "STRING", "description": "新标题"},
+                "description": {"type": "STRING", "description": "新描述"},
+                "tags": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "全量覆盖标签列表"}
             },
             "required": ["asset_id"]
         }
@@ -78,10 +78,10 @@ TOOLS = [
         name="delete_asset",
         description="将资产移至回收站（或永久删除）。",
         input_schema={
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
-                "asset_id": {"type": "integer", "description": "资产 ID"},
-                "permanent": {"type": "boolean", "description": "是否永久删除", "default": False}
+                "asset_id": {"type": "INTEGER", "description": "资产 ID"},
+                "permanent": {"type": "BOOLEAN", "description": "是否永久删除", "default": False}
             },
             "required": ["asset_id"]
         }
@@ -90,10 +90,10 @@ TOOLS = [
         name="find_similar_assets",
         description="根据指定资产查找相似的图片或视频。",
         input_schema={
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
-                "asset_id": {"type": "integer", "description": "参考资产 ID"},
-                "limit": {"type": "integer", "description": "返回数量", "default": 10}
+                "asset_id": {"type": "INTEGER", "description": "参考资产 ID"},
+                "limit": {"type": "INTEGER", "description": "返回数量", "default": 10}
             },
             "required": ["asset_id"]
         }
@@ -104,9 +104,9 @@ TOOLS = [
         name="list_albums",
         description="列出所有相册，可按类型筛选（手动、智能、AI建议）。",
         input_schema={
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
-                "album_type": {"type": "string", "enum": ["manual", "smart", "suggested"], "description": "相册类型"}
+                "album_type": {"type": "STRING", "enum": ["manual", "smart", "suggested"], "description": "相册类型"}
             }
         }
     ),
@@ -114,9 +114,9 @@ TOOLS = [
         name="get_album_details",
         description="获取相册详情及其包含的资产列表。",
         input_schema={
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
-                "album_id": {"type": "integer", "description": "相册 ID"}
+                "album_id": {"type": "INTEGER", "description": "相册 ID"}
             },
             "required": ["album_id"]
         }
@@ -125,11 +125,11 @@ TOOLS = [
         name="create_album",
         description="创建新相册并可选地添加资产。",
         input_schema={
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
-                "name": {"type": "string", "description": "相册名称"},
-                "description": {"type": "string", "description": "相册描述"},
-                "asset_ids": {"type": "array", "items": {"type": "integer"}, "description": "初始资产ID列表"}
+                "name": {"type": "STRING", "description": "相册名称"},
+                "description": {"type": "STRING", "description": "相册描述"},
+                "asset_ids": {"type": "ARRAY", "items": {"type": "INTEGER"}, "description": "初始资产ID列表"}
             },
             "required": ["name"]
         }
@@ -138,10 +138,10 @@ TOOLS = [
         name="add_to_album",
         description="将资产添加到相册。",
         input_schema={
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
-                "album_id": {"type": "integer", "description": "相册 ID"},
-                "asset_ids": {"type": "array", "items": {"type": "integer"}, "description": "资产 ID 列表"}
+                "album_id": {"type": "INTEGER", "description": "相册 ID"},
+                "asset_ids": {"type": "ARRAY", "items": {"type": "INTEGER"}, "description": "资产 ID 列表"}
             },
             "required": ["album_id", "asset_ids"]
         }
@@ -150,10 +150,10 @@ TOOLS = [
         name="remove_from_album",
         description="从相册中移除资产。",
         input_schema={
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
-                "album_id": {"type": "integer", "description": "相册 ID"},
-                "asset_ids": {"type": "array", "items": {"type": "integer"}, "description": "资产 ID 列表"}
+                "album_id": {"type": "INTEGER", "description": "相册 ID"},
+                "asset_ids": {"type": "ARRAY", "items": {"type": "INTEGER"}, "description": "资产 ID 列表"}
             },
             "required": ["album_id", "asset_ids"]
         }
@@ -162,9 +162,9 @@ TOOLS = [
         name="delete_album",
         description="删除相册（不影响资产本身）。",
         input_schema={
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
-                "album_id": {"type": "integer", "description": "相册 ID"}
+                "album_id": {"type": "INTEGER", "description": "相册 ID"}
             },
             "required": ["album_id"]
         }
@@ -174,17 +174,17 @@ TOOLS = [
     MCPTool(
         name="list_collections",
         description="列出所有集合。",
-        input_schema={"type": "object", "properties": {}}
+        input_schema={"type": "OBJECT", "properties": {}}
     ),
     MCPTool(
         name="create_collection",
         description="创建新集合并可选地添加资产。",
         input_schema={
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
-                "name": {"type": "string", "description": "集合名称"},
-                "description": {"type": "string", "description": "集合描述"},
-                "asset_ids": {"type": "array", "items": {"type": "integer"}, "description": "初始资产ID列表"}
+                "name": {"type": "STRING", "description": "集合名称"},
+                "description": {"type": "STRING", "description": "集合描述"},
+                "asset_ids": {"type": "ARRAY", "items": {"type": "INTEGER"}, "description": "初始资产ID列表"}
             },
             "required": ["name"]
         }
@@ -193,10 +193,10 @@ TOOLS = [
         name="add_to_collection",
         description="将资产添加到集合。",
         input_schema={
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
-                "collection_id": {"type": "integer", "description": "集合 ID"},
-                "asset_ids": {"type": "array", "items": {"type": "integer"}, "description": "资产 ID 列表"}
+                "collection_id": {"type": "INTEGER", "description": "集合 ID"},
+                "asset_ids": {"type": "ARRAY", "items": {"type": "INTEGER"}, "description": "资产 ID 列表"}
             },
             "required": ["collection_id", "asset_ids"]
         }
@@ -206,16 +206,16 @@ TOOLS = [
     MCPTool(
         name="list_folders",
         description="获取文件夹树结构。",
-        input_schema={"type": "object", "properties": {}}
+        input_schema={"type": "OBJECT", "properties": {}}
     ),
     MCPTool(
         name="create_folder",
         description="创建新文件夹。",
         input_schema={
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
-                "name": {"type": "string", "description": "文件夹名称"},
-                "parent_id": {"type": "integer", "description": "父文件夹 ID（可选）"}
+                "name": {"type": "STRING", "description": "文件夹名称"},
+                "parent_id": {"type": "INTEGER", "description": "父文件夹 ID（可选）"}
             },
             "required": ["name"]
         }
@@ -226,9 +226,9 @@ TOOLS = [
         name="list_trash",
         description="列出回收站中的资产。",
         input_schema={
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
-                "limit": {"type": "integer", "description": "返回数量", "default": 20}
+                "limit": {"type": "INTEGER", "description": "返回数量", "default": 20}
             }
         }
     ),
@@ -236,9 +236,9 @@ TOOLS = [
         name="restore_asset",
         description="从回收站恢复资产。",
         input_schema={
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
-                "asset_id": {"type": "integer", "description": "资产 ID"}
+                "asset_id": {"type": "INTEGER", "description": "资产 ID"}
             },
             "required": ["asset_id"]
         }
@@ -246,7 +246,7 @@ TOOLS = [
     MCPTool(
         name="empty_trash",
         description="清空回收站（永久删除所有资产）。",
-        input_schema={"type": "object", "properties": {}}
+        input_schema={"type": "OBJECT", "properties": {}}
     ),
     
     # === 私密保险库 ===
@@ -254,9 +254,9 @@ TOOLS = [
         name="move_to_vault",
         description="将资产移入私密保险库。",
         input_schema={
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
-                "asset_id": {"type": "integer", "description": "资产 ID"}
+                "asset_id": {"type": "INTEGER", "description": "资产 ID"}
             },
             "required": ["asset_id"]
         }
@@ -267,31 +267,31 @@ TOOLS = [
         name="create_share",
         description="创建资产或集合的分享链接。",
         input_schema={
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
-                "asset_id": {"type": "integer", "description": "资产 ID（与 collection_id 二选一）"},
-                "collection_id": {"type": "integer", "description": "集合 ID（与 asset_id 二选一）"},
-                "password": {"type": "string", "description": "访问密码（可选）"},
-                "expires_in_days": {"type": "integer", "description": "过期天数（可选）"}
+                "asset_id": {"type": "INTEGER", "description": "资产 ID（与 collection_id 二选一）"},
+                "collection_id": {"type": "INTEGER", "description": "集合 ID（与 asset_id 二选一）"},
+                "password": {"type": "STRING", "description": "访问密码（可选）"},
+                "expires_in_days": {"type": "INTEGER", "description": "过期天数（可选）"}
             }
         }
     ),
     MCPTool(
         name="list_shares",
         description="列出所有分享链接。",
-        input_schema={"type": "object", "properties": {}}
+        input_schema={"type": "OBJECT", "properties": {}}
     ),
     
     # === 系统信息 ===
     MCPTool(
         name="get_system_stats",
         description="获取系统统计信息（总资产数、相册数、存储使用量等）。",
-        input_schema={"type": "object", "properties": {}}
+        input_schema={"type": "OBJECT", "properties": {}}
     ),
     MCPTool(
         name="get_task_status",
         description="获取后台任务状态（AI 分析、相册建议等）。",
-        input_schema={"type": "object", "properties": {}}
+        input_schema={"type": "OBJECT", "properties": {}}
     ),
 ]
 

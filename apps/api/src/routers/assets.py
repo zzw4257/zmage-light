@@ -2,9 +2,10 @@
 资产相关 API 路由
 """
 from typing import List, Optional
+import io
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, insert
 
 from datetime import datetime
 from src.models import get_db, Asset, AssetVersion, AssetStatus, AssetType, Folder, CustomField
@@ -13,9 +14,10 @@ from src.schemas import (
     AssetResponse, AssetListResponse, AssetUpdate, AssetSearchRequest,
     SimilarAssetResponse, FolderResponse, FolderTreeResponse, FolderCreate,
     CustomFieldResponse, CustomFieldCreate, UploadResponse, BatchUploadResponse,
-    AssetEdit, AssetAIEdit,
+    AssetEdit, AssetAIEdit, AssetVersionResponse,
 )
 from src.services import asset_service, storage_service, album_service
+from src.models.album import album_assets
 
 from src.routers.auth import get_current_user
 from src.models.user import User
@@ -391,6 +393,11 @@ async def edit_asset(
         thumbnail_path = f"thumbnails/{new_filename}"
         await storage_service.upload_bytes(thumbnail_data, thumbnail_path, "image/jpeg")
         
+        # 获取图片尺寸
+        from PIL import Image
+        img = Image.open(io.BytesIO(edited_data))
+        new_width, new_height = img.size
+        
         new_asset = Asset(
             filename=new_filename,
             original_filename=asset.original_filename,
@@ -400,14 +407,32 @@ async def edit_asset(
             mime_type="image/jpeg",
             asset_type=AssetType.IMAGE,
             file_hash=calculate_file_hash(edited_data),
+            width=new_width,
+            height=new_height,
             title=f"{asset.title or asset.filename} (副本)",
             folder_id=asset.folder_id,
             user_id=current_user.id,
-            status=AssetStatus.PENDING,
+            is_private=asset.is_private,
+            tags=asset.tags.copy() if asset.tags else [],
+            camera_model=asset.camera_model,
+            location=asset.location,
+            latitude=asset.latitude,
+            longitude=asset.longitude,
+            taken_at=asset.taken_at.replace(tzinfo=None) if asset.taken_at else None,
+            exif_data=asset.exif_data.copy() if asset.exif_data else None,
+            status=AssetStatus.READY, # 设置为 READY 以便立即看到，后台再补充 AI 分析
         )
         db.add(new_asset)
         await db.commit()
         await db.refresh(new_asset)
+        
+        # 将副本加入同样的相册
+        stmt = select(album_assets.c.album_id).where(album_assets.c.asset_id == asset.id)
+        result = await db.execute(stmt)
+        album_ids = result.scalars().all()
+        for aid in album_ids:
+            await db.execute(insert(album_assets).values(album_id=aid, asset_id=new_asset.id))
+        await db.commit()
         
         background_tasks.add_task(process_asset_background, new_asset.id)
         return asset_to_response(new_asset)
@@ -454,12 +479,16 @@ async def edit_asset(
         asset.file_path = new_path
         asset.file_size = len(edited_data)
         asset.file_hash = calculate_file_hash(edited_data)
-        asset.mime_type = "image/jpeg" # 强制转为 JPEG
         # 重新生成缩略图
         thumbnail_data = await storage_service.generate_thumbnail(edited_data)
         thumbnail_path = f"thumbnails/{new_filename}"
         await storage_service.upload_bytes(thumbnail_data, thumbnail_path, "image/jpeg")
         asset.thumbnail_path = thumbnail_path
+        
+        # 更新尺寸
+        from PIL import Image
+        img = Image.open(io.BytesIO(edited_data))
+        asset.width, asset.height = img.size
         
         # 6. 创建新的 Version 记录 (保存编辑参数)
         new_version = AssetVersion(
@@ -483,6 +512,67 @@ async def edit_asset(
         return asset_to_response(asset)
 
 
+@router.get("/{asset_id}/versions", response_model=List[AssetVersionResponse], summary="获取资产版本历史")
+async def get_asset_versions(
+    asset_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取资产的所有版本记录"""
+    asset = await db.get(Asset, asset_id)
+    if not asset or asset.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="资产不存在")
+    
+    stmt = select(AssetVersion).where(AssetVersion.asset_id == asset_id).order_by(AssetVersion.version_number.desc())
+    result = await db.execute(stmt)
+    versions = result.scalars().all()
+    
+    responses = []
+    for v in versions:
+        res = AssetVersionResponse.model_validate(v)
+        res.url = storage_service.get_public_url(v.file_path)
+        responses.append(res)
+    
+    return responses
+
+
+@router.post("/{asset_id}/versions/{version_id}/restore", response_model=AssetResponse, summary="恢复到指定版本")
+async def restore_asset_version(
+    asset_id: int,
+    version_id: int,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """将资产恢复到指定的历史版本"""
+    asset = await db.get(Asset, asset_id)
+    if not asset or asset.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="资产不存在")
+    
+    version = await db.get(AssetVersion, version_id)
+    if not version or version.asset_id != asset_id:
+        raise HTTPException(status_code=404, detail="版本记录不存在")
+    
+    # 执行恢复
+    asset.file_path = version.file_path
+    asset.file_size = version.file_size
+    asset.file_hash = version.file_hash
+    
+    # 重新生成缩略图
+    image_data = await storage_service.download_file(version.file_path)
+    thumbnail_data = await storage_service.generate_thumbnail(image_data)
+    ext = version.file_path.split('.')[-1]
+    thumbnail_path = f"thumbnails/{asset.id}_restored_{version.id}.{ext}"
+    await storage_service.upload_bytes(thumbnail_data, thumbnail_path, "image/jpeg")
+    
+    asset.thumbnail_path = thumbnail_path
+    await db.commit()
+    await db.refresh(asset)
+    
+    background_tasks.add_task(process_asset_background, asset.id)
+    return asset_to_response(asset)
+
+
 @router.post("/{asset_id}/ai-edit", response_model=AssetResponse, summary="AI 智能编辑")
 async def ai_edit_asset(
     asset_id: int,
@@ -497,7 +587,7 @@ async def ai_edit_asset(
     - 支持风格转换、智能改图
     - 生成结果保存为新版本或新资产
     """
-    from src.services.gemini_image import gemini_image_service, ImageAspectRatio
+    from src.services.gemini_image import gemini_image_service, ImageAspectRatio, GeminiImageModel, ImageSize
     
     asset = await db.get(Asset, asset_id)
     if not asset or asset.asset_type != AssetType.IMAGE or asset.user_id != current_user.id:
@@ -521,17 +611,36 @@ async def ai_edit_asset(
             final_prompt += ", in high quality pixel art style, game boy aesthetic"
             
         # 3. 调用 Gemini Image API
-        # 注意：这里我们使用底图作为参考图进行 EDIT
-        ar = ImageAspectRatio.SQUARE
-        if data.aspect_ratio == "PORTRAIT": ar = ImageAspectRatio.PORTRAIT
-        elif data.aspect_ratio == "LANDSCAPE": ar = ImageAspectRatio.LANDSCAPE
+        # 智能推断最佳宽高比：从原图尺寸自动计算
+        from src.services.gemini_image import find_closest_aspect_ratio
         
+        # 如果用户明确指定了比例，则尊重用户选择；否则自动匹配
+        if data.aspect_ratio and data.aspect_ratio in ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]:
+            # 用户直接传入标准比例字符串
+            ar = ImageAspectRatio(data.aspect_ratio)
+        elif data.aspect_ratio == "PORTRAIT":
+            ar = ImageAspectRatio.RATIO_3_4
+        elif data.aspect_ratio == "LANDSCAPE":
+            ar = ImageAspectRatio.RATIO_16_9
+        elif data.aspect_ratio == "SQUARE":
+            ar = ImageAspectRatio.RATIO_1_1
+        else:
+            # 自动从原图尺寸推断最接近的标准比例
+            ar = find_closest_aspect_ratio(asset.width or 1, asset.height or 1)
+        
+        # 确定尺寸
+        img_size = None
+        if data.image_size == "2K": img_size = ImageSize.SIZE_2K
+        elif data.image_size == "4K": img_size = ImageSize.SIZE_4K
+
         images = await gemini_image_service.generate_image(
             prompt=final_prompt,
+            model=GeminiImageModel.NANO_BANANA_PRO, # 编辑默认使用 Pro
             negative_prompt=data.negative_prompt,
             reference_images=[image_data],
             reference_mime_types=[asset.mime_type],
-            aspect_ratio=ar
+            aspect_ratio=ar,
+            image_size=img_size
         )
         
         if not images:
@@ -553,6 +662,11 @@ async def ai_edit_asset(
             thumbnail_path = f"thumbnails/{new_filename}"
             await storage_service.upload_bytes(thumbnail_data, thumbnail_path, "image/jpeg")
             
+            # 获取图片尺寸
+            from PIL import Image
+            img = Image.open(io.BytesIO(edited_data))
+            new_width, new_height = img.size
+
             new_asset = Asset(
                 filename=new_filename,
                 original_filename=asset.original_filename,
@@ -562,20 +676,55 @@ async def ai_edit_asset(
                 mime_type="image/jpeg",
                 asset_type=AssetType.IMAGE,
                 file_hash=calculate_file_hash(edited_data),
+                width=new_width,
+                height=new_height,
                 title=f"{asset.title or asset.filename} (AI 增强)",
                 folder_id=asset.folder_id,
                 user_id=current_user.id,
-                status=AssetStatus.PENDING,
+                is_private=asset.is_private,
+                tags=asset.tags.copy() if asset.tags else [],
+                camera_model=asset.camera_model,
+                location=asset.location,
+                latitude=asset.latitude,
+                longitude=asset.longitude,
+                taken_at=asset.taken_at.replace(tzinfo=None) if asset.taken_at else None,
+                exif_data=asset.exif_data.copy() if asset.exif_data else None,
+                status=AssetStatus.READY,
             )
             db.add(new_asset)
             await db.commit()
             await db.refresh(new_asset)
             
+            # 将副本加入同样的相册
+            stmt = select(album_assets.c.album_id).where(album_assets.c.asset_id == asset.id)
+            result = await db.execute(stmt)
+            album_ids = result.scalars().all()
+            for aid in album_ids:
+                await db.execute(insert(album_assets).values(album_id=aid, asset_id=new_asset.id))
+            await db.commit()
+            
             background_tasks.add_task(process_asset_background, new_asset.id)
             return asset_to_response(new_asset)
         else:
             # 版本控制模式
-            # (简略实现，实际可以优化复用 edit_asset 的 version 逻辑)
+            # 1. 确保原始版本存在 (如果是首次编辑)
+            stmt = select(AssetVersion).where(AssetVersion.asset_id == asset.id).order_by(AssetVersion.version_number)
+            result = await db.execute(stmt)
+            versions = result.scalars().all()
+            
+            if not versions:
+                v1 = AssetVersion(
+                    asset_id=asset.id,
+                    version_number=1,
+                    file_path=asset.file_path,
+                    file_size=asset.file_size,
+                    file_hash=asset.file_hash,
+                    note="Original"
+                )
+                db.add(v1)
+                await db.commit()
+                versions = [v1]
+
             new_path = f"assets/{new_filename}"
             await storage_service.upload_bytes(edited_data, new_path, "image/jpeg")
             
@@ -584,10 +733,30 @@ async def ai_edit_asset(
             asset.file_size = len(edited_data)
             asset.file_hash = calculate_file_hash(edited_data)
             
+            # 重新生成缩略图
             thumbnail_data = await storage_service.generate_thumbnail(edited_data)
             thumbnail_path = f"thumbnails/{new_filename}"
             await storage_service.upload_bytes(thumbnail_data, thumbnail_path, "image/jpeg")
             asset.thumbnail_path = thumbnail_path
+            
+            # 更新尺寸
+            from PIL import Image
+            img = Image.open(io.BytesIO(edited_data))
+            asset.width, asset.height = img.size
+            asset.mime_type = "image/jpeg"
+            
+            # 2. 创建新版本记录 (保存 AI 参数)
+            next_ver = versions[-1].version_number + 1
+            new_version = AssetVersion(
+                asset_id=asset.id,
+                version_number=next_ver,
+                file_path=new_path,
+                file_size=len(edited_data),
+                file_hash=asset.file_hash,
+                parameters={"ai_prompt": final_prompt, "style": data.style},
+                note=f"AI Edit: {data.style or 'Enhanced'}"
+            )
+            db.add(new_version)
             
             await db.commit()
             await db.refresh(asset)

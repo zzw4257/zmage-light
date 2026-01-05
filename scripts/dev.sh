@@ -112,11 +112,13 @@ if [ "$START_WEB" = true ]; then
     $COMPOSE_CMD up -d img-lib-web
 fi
 
-# 运行数据库迁移
+# 运行数据库迁移 (本地执行需要指向 localhost 映射端口)
 echo ""
 echo -e "${BLUE}🔄 运行数据库迁移...${NC}"
 cd "$PROJECT_DIR/apps/api"
-python3 -m src.migrations.migrate 2>/dev/null || echo -e "${YELLOW}⚠️  迁移可能已执行过或 Python 环境未配置${NC}"
+# 优先使用 .env 中的配置，但如果是本地运行且指向 docker 中的数据库，需注意主机名映射
+DATABASE_URL="postgresql+asyncpg://${POSTGRES_USER:-zmage}:${POSTGRES_PASSWORD:-zmage_password}@localhost:30432/${POSTGRES_DB:-zmage}" \
+python3 -m src.migrations.migrate 2>/dev/null || echo -e "${YELLOW}⚠️  自动迁移失败，请确保本地安装了必要的 Python 依赖或手动执行迁移${NC}"
 cd "$PROJECT_DIR"
 
 # 显示状态
@@ -139,13 +141,13 @@ if [ "$START_API" = false ] || [ "$START_WEB" = false ]; then
     echo ""
     
     if [ "$START_API" = false ]; then
-        echo -e "   ${YELLOW}API 服务器 (端口 34257):${NC}"
-        echo "   cd $PROJECT_DIR/apps/api && uvicorn src.main:app --reload --host 0.0.0.0 --port 34257"
+        echo -e "   ${YELLOW}API 服务器 (端口 ${API_PORT:-34257}):${NC}"
+        echo "   cd $PROJECT_DIR/apps/api && uvicorn src.main:app --reload --host 0.0.0.0 --port ${API_PORT:-34257}"
         echo ""
     fi
     
     if [ "$START_WEB" = false ]; then
-        echo -e "   ${YELLOW}前端开发服务器 (端口 32333):${NC}"
+        echo -e "   ${YELLOW}前端开发服务器 (端口 ${WEB_PORT:-32333}):${NC}"
         echo "   cd $PROJECT_DIR/apps/web && pnpm dev"
         echo ""
     fi
@@ -153,14 +155,14 @@ fi
 
 echo -e "${CYAN}🌐 访问地址:${NC}"
 if [ "$START_WEB" = true ]; then
-    echo -e "   - 前端:     ${GREEN}http://localhost:32333${NC} (Docker)"
+    echo -e "   - 前端:     ${GREEN}http://localhost:${WEB_PORT:-32333}${NC} (Docker)"
 else
-    echo -e "   - 前端:     ${GREEN}http://localhost:32333${NC} (需手动启动)"
+    echo -e "   - 前端:     ${GREEN}http://localhost:${WEB_PORT:-32333}${NC} (需手动启动)"
 fi
 
 if [ "$START_API" = true ]; then
-    echo -e "   - API:      ${GREEN}http://localhost:34257${NC} (Docker)"
-    echo -e "   - API 文档: ${GREEN}http://localhost:34257/docs${NC}"
+    echo -e "   - API:      ${GREEN}http://localhost:${API_PORT:-34257}${NC} (Docker)"
+    echo -e "   - API 文档: ${GREEN}http://localhost:${API_PORT:-34257}/docs${NC}"
 else
-    echo -e "   - API:      ${GREEN}http://localhost:34257${NC} (需手动启动)"
+    echo -e "   - API:      ${GREEN}http://localhost:${API_PORT:-34257}${NC} (需手动启动)"
 fi

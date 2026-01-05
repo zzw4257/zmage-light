@@ -69,7 +69,9 @@ async def empty_trash(
     
     deleted_count = 0
     for asset in assets:
-        await asset_service.delete_asset(db, asset)
+        await asset_service.delete_asset(db, asset, commit=False)
         deleted_count += 1
+        
+    await db.commit()
         
     return {"message": f"回收站已清空，永久删除了 {deleted_count} 个项目"}

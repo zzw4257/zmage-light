@@ -548,13 +548,14 @@ class AssetService:
         ]
 
 
-    async def delete_asset(self, db: AsyncSession, asset: Asset):
+    async def delete_asset(self, db: AsyncSession, asset: Asset, commit: bool = True):
         """
         永久删除资产
         
         Args:
             db: 数据库会话
             asset: 资产对象
+            commit: 是否立即提交事务
         """
         # 1. 删除文件
         if asset.file_path:
@@ -571,7 +572,8 @@ class AssetService:
                 
         # 3. 删除数据库记录
         await db.delete(asset)
-        await db.commit()
+        if commit:
+            await db.commit()
 
 
 # 单例

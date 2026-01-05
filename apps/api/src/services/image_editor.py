@@ -69,6 +69,50 @@ class ImageEditorService:
                     if params.get("vertical"):
                         img = ImageOps.flip(img)
                         
+                elif op_type == "filter":
+                    filter_name = params.get("name", "none")
+                    if filter_name == "grayscale":
+                        img = ImageOps.grayscale(img).convert("RGB")
+                    elif filter_name == "sepia":
+                        # Apply sepia tone
+                        sepia_tone = (1.1, 1.0, 0.9) # Warm tone
+                        matrix = (
+                            0.393, 0.769, 0.189, 0,
+                            0.349, 0.686, 0.168, 0,
+                            0.272, 0.534, 0.131, 0
+                        )
+                        img = img.convert("RGB", matrix)
+                    elif filter_name == "retro":
+                        # Optimized Sepia-like Retro using matrix
+                        matrix = (
+                            0.393 + 0.1, 0.769, 0.189, 0,
+                            0.349, 0.686 + 0.1, 0.168, 0,
+                            0.272, 0.534, 0.131 + 0.1, 0
+                        )
+                        img = img.convert("RGB", matrix)
+                        img = ImageEnhance.Color(img).enhance(0.7) # Desaturate a bit
+                        img = ImageEnhance.Contrast(img).enhance(1.2)
+                    elif filter_name == "cold":
+                        # Blue shift
+                        r, g, b = img.split()
+                        r = r.point(lambda i: i * 0.9)
+                        b = b.point(lambda i: i * 1.2)
+                        img = Image.merge("RGB", (r, g, b))
+                    elif filter_name == "warm":
+                        # Red/Yellow shift
+                        r, g, b = img.split()
+                        r = r.point(lambda i: i * 1.2)
+                        b = b.point(lambda i: i * 0.9)
+                        img = Image.merge("RGB", (r, g, b))
+                    elif filter_name == "cyber":
+                        # High contrast, purple hint
+                        img = ImageEnhance.Contrast(img).enhance(1.3)
+                        img = ImageEnhance.Color(img).enhance(1.5)
+                        r, g, b = img.split()
+                        r = r.point(lambda i: i * 1.1)
+                        b = b.point(lambda i: i * 1.3)
+                        img = Image.merge("RGB", (r, g, b))
+                        
             except Exception as e:
                 # Log error but continue with other ops? Or stop?
                 # Professional: Skip failed op but warn. For now, just print/log.

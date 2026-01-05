@@ -32,27 +32,60 @@ async def get_task_status(
         except ValueError:
             pass
     
-    # 统计任务数量
-    pending_result = await db.execute(
-        select(func.count(Task.id)).where(Task.status == TaskStatus.PENDING, Task.user_id == current_user.id)
-    )
-    pending_tasks = pending_result.scalar()
-    
-    running_result = await db.execute(
-        select(func.count(Task.id)).where(Task.status == TaskStatus.RUNNING, Task.user_id == current_user.id)
-    )
-    running_tasks = running_result.scalar()
-    
-    failed_result = await db.execute(
-        select(func.count(Task.id)).where(Task.status == TaskStatus.FAILED, Task.user_id == current_user.id)
-    )
-    failed_tasks = failed_result.scalar()
-    
-    # 获取最近任务
-    recent_result = await db.execute(
-        select(Task).where(Task.user_id == current_user.id).order_by(Task.created_at.desc()).limit(10)
-    )
-    recent_tasks = recent_result.scalars().all()
+    # 统计任务数量 (兼容数据库无 user_id 字段的情况)
+    try:
+        pending_result = await db.execute(
+            select(func.count(Task.id)).where(
+                Task.status == TaskStatus.PENDING,
+                (Task.user_id == current_user.id) | (Task.user_id.is_(None))
+            )
+        )
+        pending_tasks = pending_result.scalar()
+        
+        running_result = await db.execute(
+            select(func.count(Task.id)).where(
+                Task.status == TaskStatus.RUNNING,
+                (Task.user_id == current_user.id) | (Task.user_id.is_(None))
+            )
+        )
+        running_tasks = running_result.scalar()
+        
+        failed_result = await db.execute(
+            select(func.count(Task.id)).where(
+                Task.status == TaskStatus.FAILED,
+                (Task.user_id == current_user.id) | (Task.user_id.is_(None))
+            )
+        )
+        failed_tasks = failed_result.scalar()
+        
+        # 获取最近任务
+        recent_result = await db.execute(
+            select(Task).where(
+                (Task.user_id == current_user.id) | (Task.user_id.is_(None))
+            ).order_by(Task.created_at.desc()).limit(10)
+        )
+        recent_tasks = recent_result.scalars().all()
+    except Exception:
+        # 如果数据库没有 user_id 列，fallback 到不含 user_id 的查询
+        pending_result = await db.execute(
+            select(func.count(Task.id)).where(Task.status == TaskStatus.PENDING)
+        )
+        pending_tasks = pending_result.scalar()
+        
+        running_result = await db.execute(
+            select(func.count(Task.id)).where(Task.status == TaskStatus.RUNNING)
+        )
+        running_tasks = running_result.scalar()
+        
+        failed_result = await db.execute(
+            select(func.count(Task.id)).where(Task.status == TaskStatus.FAILED)
+        )
+        failed_tasks = failed_result.scalar()
+        
+        recent_result = await db.execute(
+            select(Task).order_by(Task.created_at.desc()).limit(10)
+        )
+        recent_tasks = recent_result.scalars().all()
     
     return TaskStatusResponse(
         last_scan_time=last_scan_time,

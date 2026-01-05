@@ -3,7 +3,7 @@ Pydantic 模型模块
 """
 from src.schemas.asset import (
     AssetBase, AssetCreate, AssetUpdate, AssetResponse, AssetListResponse,
-    AssetSearchRequest, SimilarAssetResponse, AssetEdit, AssetAIEdit,
+    AssetSearchRequest, SimilarAssetResponse, AssetEdit, AssetAIEdit, AssetVersionResponse,
     FolderBase, FolderCreate, FolderResponse, FolderTreeResponse,
     CustomFieldBase, CustomFieldCreate, CustomFieldResponse,
     UploadResponse, BatchUploadResponse,
@@ -40,5 +40,5 @@ __all__ = [
     # User
     "UserBase", "UserCreate", "UserUpdate", "UserResponse", "Token", "TokenData",
     # Other
-    "AssetEdit",
+    "AssetEdit", "AssetAIEdit", "AssetVersionResponse",
 ]

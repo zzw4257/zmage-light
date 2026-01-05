@@ -5,9 +5,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Check, RotateCcw, Save, Palette, Sliders, Image as ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Asset } from "@/lib/api";
-import { getStorageUrl } from "@/lib/api";
+import { assetsApi, getStorageUrl } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import toast from "react-hot-toast";
+import { useQueryClient } from "@tanstack/react-query";
 
 interface FilterPanelProps {
     asset: Asset;
@@ -22,19 +23,16 @@ interface FilterPreset {
 }
 
 const PRESETS: FilterPreset[] = [
-    { id: "original", name: "原图", filter: "none" },
-    { id: "grayscale", name: "黑白", filter: "grayscale(100%)" },
-    { id: "sepia", name: "复古", filter: "sepia(100%)" },
-    { id: "vibrant", name: "鲜艳", filter: "saturate(200%)" },
-    { id: "cold", name: "冷色", filter: "hue-rotate(180deg) saturate(150%)" },
-    { id: "warm", name: "暖色", filter: "sepia(30%) saturate(150%) hue-rotate(-30deg)" },
-    { id: "noir", name: "经典", filter: "grayscale(100%) contrast(150%) brightness(80%)" },
-    { id: "dramatic", name: "戏剧", filter: "contrast(150%) saturate(50%)" },
-    { id: "fade", name: "淡雅", filter: "brightness(110%) saturate(70%) contrast(90%)" },
+    { id: "none", name: "原图", filter: "none" },
+    { id: "grayscale", name: "极简黑白", filter: "grayscale(100%)" },
+    { id: "sepia", name: "复古棕褐色", filter: "sepia(100%)" },
+    { id: "cold", name: "冷色调", filter: "hue-rotate(180deg) saturate(150%)" },
+    { id: "warm", name: "暖色调", filter: "sepia(30%) saturate(150%)" },
+    { id: "cyber", name: "赛博朋克", filter: "hue-rotate(280deg) contrast(150%) saturate(200%)" },
 ];
 
 export function FilterPanel({ asset, open, onClose }: FilterPanelProps) {
-    const [selectedPreset, setSelectedPreset] = useState("original");
+    const [selectedPreset, setSelectedPreset] = useState("none");
     const [brightness, setBrightness] = useState(100);
     const [contrast, setContrast] = useState(100);
     const [saturation, setSaturation] = useState(100);
@@ -65,13 +63,48 @@ export function FilterPanel({ asset, open, onClose }: FilterPanelProps) {
         toast.success("已重置参数");
     };
 
-    const handleSave = () => {
-        // In a real app, this would send parameters to backend to process the image
-        toast.loading("正在处理并应用滤镜...", { duration: 2000 });
-        setTimeout(() => {
-            toast.success("滤镜应用成功 (模拟)");
+    const queryClient = useQueryClient();
+    const [isSaving, setIsSaving] = useState(false);
+
+    const handleSave = async () => {
+        try {
+            setIsSaving(true);
+            const ops: any[] = [];
+
+            // 1. Manual Adjustments
+            const adjustParams: any = {};
+            if (brightness !== 100) adjustParams.brightness = brightness / 100;
+            if (contrast !== 100) adjustParams.contrast = contrast / 100;
+            if (saturation !== 100) adjustParams.saturation = saturation / 100;
+
+            if (Object.keys(adjustParams).length > 0) {
+                ops.push({ type: "adjust", params: adjustParams });
+            }
+
+            // 2. Filter Preset
+            if (selectedPreset !== 'none') {
+                ops.push({ type: "filter", params: { name: selectedPreset } });
+            }
+
+            if (ops.length === 0) {
+                toast.error("未做任何修改");
+                return;
+            }
+
+            const response = await assetsApi.edit(asset.id, {
+                history: ops,
+                save_as_new: true, // 滤镜实验室默认为另存为副本
+            });
+
+            toast.success("滤镜效果已保存为副本");
+            queryClient.invalidateQueries({ queryKey: ["assets"] });
+            queryClient.invalidateQueries({ queryKey: ["albumAssets"] });
             onClose();
-        }, 2000);
+        } catch (error: any) {
+            toast.error(error.response?.data?.detail || "保存失败");
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     return (
@@ -187,7 +220,11 @@ export function FilterPanel({ asset, open, onClose }: FilterPanelProps) {
                         <Button variant="outline" onClick={onClose} className="rounded-xl">
                             取消
                         </Button>
-                        <Button onClick={handleSave} className="rounded-xl bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/20">
+                        <Button
+                            onClick={handleSave}
+                            loading={isSaving}
+                            className="rounded-xl bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/20"
+                        >
                             <Save className="w-4 h-4 mr-2" />
                             保存为副本
                         </Button>

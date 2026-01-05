@@ -43,6 +43,7 @@ export default function RegisterPage() {
         <div className="min-h-screen flex items-center justify-center bg-[var(--background)] p-4">
             <Card className="w-full max-w-md">
                 <CardHeader className="space-y-1 text-center">
+                    <img src="/logo-icon.png" alt="Zmage Logo" className="w-12 h-12 mx-auto mb-2 rounded-xl shadow-lg" />
                     <CardTitle className="text-2xl font-bold">创建账号</CardTitle>
                     <p className="text-[var(--muted-foreground)]">开始您的智能资产管理之旅</p>
                 </CardHeader>

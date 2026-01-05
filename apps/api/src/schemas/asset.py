@@ -50,6 +50,7 @@ class AssetAIEdit(BaseModel):
     negative_prompt: Optional[str] = None
     style: Optional[str] = None  # 预设风格: "anime", "oil", "cinema", "sketch", "pixel"
     aspect_ratio: str = "SQUARE" # SQUARE, PORTRAIT, LANDSCAPE
+    image_size: Optional[str] = None  # 仅 Pro 支持 2K / 4K
     save_as_new: bool = True  # AI 生成通常倾向于另存为
 
 
@@ -132,6 +133,23 @@ class SimilarAssetResponse(BaseModel):
     """相似资产响应"""
     asset: AssetResponse
     similarity: float
+
+
+class AssetVersionResponse(BaseModel):
+    """资产版本响应模型"""
+    id: int
+    asset_id: int
+    version_number: int
+    file_path: str
+    file_size: int
+    file_hash: str
+    parameters: Optional[Dict[str, Any]] = None
+    note: Optional[str] = None
+    created_at: datetime
+    url: Optional[str] = None
+
+    class Config:
+        from_attributes = True
 
 
 class FolderBase(BaseModel):

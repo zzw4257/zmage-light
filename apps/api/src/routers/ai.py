@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from src.models import get_db, Asset, User
 from src.services import gemini_image_service, storage_service, asset_service
-from src.services.gemini_image import GeminiImageModel, ImageAspectRatio, ImageSize
+from src.services.gemini_image import GeminiImageModel, ImageAspectRatio, ImageSize, find_closest_aspect_ratio
 from src.utils.security import get_current_user
 
 router = APIRouter(
@@ -20,7 +20,7 @@ class AIImageGenerateRequest(BaseModel):
     prompt: str
     negative_prompt: Optional[str] = None
     model: GeminiImageModel = GeminiImageModel.NANO_BANANA
-    aspect_ratio: ImageAspectRatio = ImageAspectRatio.SQUARE
+    aspect_ratio: ImageAspectRatio = ImageAspectRatio.RATIO_1_1
     image_size: Optional[ImageSize] = None
     number_of_images: int = 1
 
@@ -29,7 +29,7 @@ class AIImageEditRequest(BaseModel):
     reference_asset_id: int
     negative_prompt: Optional[str] = None
     model: GeminiImageModel = GeminiImageModel.NANO_BANANA_PRO
-    aspect_ratio: ImageAspectRatio = ImageAspectRatio.SQUARE
+    aspect_ratio: Optional[ImageAspectRatio] = None  # None = 自动检测
     image_size: Optional[ImageSize] = None
 
 class AIImageResponse(BaseModel):
@@ -39,7 +39,7 @@ class AIImageResponse(BaseModel):
 @router.post("/generate", response_model=AIImageResponse)
 async def generate_image(request: AIImageGenerateRequest):
     """
-    文生图
+    文生图 (Nano Banana / Pro)
     """
     try:
         images_bytes = await gemini_image_service.generate_image(
@@ -68,13 +68,12 @@ async def edit_image(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    图生图 / 图片编辑
+    图生图 / 图片编辑 (Nano Banana Pro 尊享)
     """
     from src.utils.security import VisibilityHelper
     # 获取参考图片
     asset = await db.get(Asset, request.reference_asset_id)
     if not asset or asset.deleted_at is not None or asset.is_private or asset.user_id != current_user.id:
-        # 虽然逻辑相同，但保持导入 VisibilityHelper 以同步未来逻辑
         raise HTTPException(status_code=404, detail="参考资产不存在或不可用")
         
     # 下载图片数据
@@ -87,11 +86,16 @@ async def edit_image(
         raise HTTPException(status_code=500, detail=f"读取资产文件失败: {str(e)}")
 
     try:
+        # 智能推断宽高比：如果用户未指定，则从原图尺寸自动计算
+        actual_aspect_ratio = request.aspect_ratio
+        if actual_aspect_ratio is None:
+            actual_aspect_ratio = find_closest_aspect_ratio(asset.width or 1, asset.height or 1)
+        
         images_bytes = await gemini_image_service.generate_image(
             prompt=request.prompt,
             model=request.model,
             negative_prompt=request.negative_prompt,
-            aspect_ratio=request.aspect_ratio,
+            aspect_ratio=actual_aspect_ratio,
             image_size=request.image_size,
             reference_images=[file_bytes],
             reference_mime_types=[asset.mime_type or "image/jpeg"],
@@ -106,6 +110,7 @@ async def edit_image(
     except Exception as e:
         print(f"Edit error: {e}")
         raise HTTPException(status_code=500, detail="图片编辑失败，请检查 API Key 或网络连接")
+
 class AIChatMessage(BaseModel):
     role: str
     content: str

@@ -3,7 +3,7 @@
 """
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Text, Integer, DateTime, JSON, Enum as SQLEnum
+from sqlalchemy import String, Text, Integer, DateTime, JSON, Enum as SQLEnum, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 import enum
 
@@ -38,7 +38,9 @@ class Task(Base):
     task_type: Mapped[TaskType] = mapped_column(SQLEnum(TaskType, native_enum=False), nullable=False)
     status: Mapped[TaskStatus] = mapped_column(SQLEnum(TaskStatus, native_enum=False), default=TaskStatus.PENDING)
     
-    # 进度
+    # 所有者
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    
     # 进度
     progress: Mapped[int] = mapped_column(Integer, default=0)  # 0-100
     total_items: Mapped[int] = mapped_column("total", Integer, default=0)
