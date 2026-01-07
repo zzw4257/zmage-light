@@ -7,18 +7,26 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- 用户表
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
-    username VARCHAR(100) NOT NULL UNIQUE,
-    email VARCHAR(255) NOT NULL UNIQUE,
-    hashed_password VARCHAR(255) NOT NULL,
+    username VARCHAR(100) UNIQUE,
+    email VARCHAR(255) UNIQUE,
+    mobile VARCHAR(20) UNIQUE,
+    hashed_password VARCHAR(255),
     full_name VARCHAR(100),
+    avatar_url VARCHAR(512),
     is_active BOOLEAN DEFAULT TRUE,
     is_superuser BOOLEAN DEFAULT FALSE,
+    email_verified BOOLEAN DEFAULT FALSE,
+    mobile_verified BOOLEAN DEFAULT FALSE,
+    wechat_openid VARCHAR(100) UNIQUE,
+    google_id VARCHAR(100) UNIQUE,
+    vault_pin_hash VARCHAR(255),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_mobile ON users(mobile);
 
 -- 文件夹表
 CREATE TABLE IF NOT EXISTS folders (
@@ -59,6 +67,7 @@ CREATE TABLE IF NOT EXISTS assets (
     longitude FLOAT,
     custom_fields JSONB DEFAULT '{}',
     status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    processing_step VARCHAR(32),
     error_message TEXT,
     folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL,
     vector_id VARCHAR(64),
@@ -316,3 +325,20 @@ CREATE INDEX IF NOT EXISTS idx_custom_field_definitions_user_id ON custom_field_
 -- Add user_id to tasks table
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
+
+-- 2026-01-07: Add missing user columns for social login and verification
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mobile VARCHAR(20) UNIQUE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url VARCHAR(512);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mobile_verified BOOLEAN DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS wechat_openid VARCHAR(100) UNIQUE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR(100) UNIQUE;
+CREATE INDEX IF NOT EXISTS idx_users_mobile ON users(mobile);
+
+-- Make username/email/password nullable for social login flows
+ALTER TABLE users ALTER COLUMN username DROP NOT NULL;
+ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
+ALTER TABLE users ALTER COLUMN hashed_password DROP NOT NULL;
+
+-- Add processing_step column to assets table
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS processing_step VARCHAR(32);
