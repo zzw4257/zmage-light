@@ -391,8 +391,15 @@ class GeminiService:
                 # 将工具结果发送回模型获取最终回复
                 response = chat.send_message(tool_results)
 
+            # 获取最终文本响应
+            final_text = response.text if response.text else ""
+            
+            # 如果有工具调用但没有最终文本，生成一个汇总
+            if all_tool_results and not final_text:
+                final_text = "已完成操作。"
+            
             return {
-                "content": response.text,
+                "content": final_text,
                 "role": "bot",
                 "tool_results": all_tool_results
             }

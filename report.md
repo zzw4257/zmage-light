@@ -1981,7 +1981,82 @@ graph TB
 
 ### 4.3 系统模块划分
 
-[待展开：详细说明各模块职责]
+Zmage 采用清晰的三层架构，各模块职责明确，便于维护和扩展。
+
+#### 4.3.1 前端模块（`apps/web`）
+
+**职责**：用户界面展示、交互逻辑处理、数据可视化
+
+**核心模块**：
+- **路由模块**（`src/app`）：Next.js App Router 文件系统路由
+  - `page.tsx`：首页，资产网格/列表展示
+  - `albums/`：相册管理页面
+  - `map/`：足迹地图页面
+  - `settings/`：系统设置页面
+- **组件模块**（`src/components`）：
+  - `layout/`：布局组件（Header、Sidebar）
+  - `asset/`：资产相关组件（AssetGrid、AssetCard、AssetEditor、UploadModal）
+  - `album/`：相册组件（AlbumModal、SmartAlbumBuilder）
+  - `ui/`：基础 UI 组件（Button、Modal、Input、Badge）
+- **状态管理**（`src/store`）：Zustand 全局状态
+  - 选中资产、搜索状态、视图模式、侧边栏状态
+- **API 客户端**（`src/lib/api.ts`）：Axios 封装的 API 调用
+
+#### 4.3.2 后端模块（`apps/api`）
+
+**职责**：业务逻辑处理、数据访问、API 接口提供
+
+**核心模块**：
+- **路由层**（`src/routers`）：
+  - `assets.py`：资产管理（上传、查询、编辑、删除）
+  - `albums.py`：相册管理（创建、添加、删除）
+  - `auth.py`：认证授权（注册、登录、Token 生成）
+  - `ai.py`：AI 功能（图片分析、对话、嵌入生成）
+  - `mcp.py`：MCP 工具调用接口
+  - `batch.py`：批量操作（批量删除、更新、移动）
+  - `stats.py`：系统统计接口
+- **服务层**（`src/services`）：
+  - `asset.py`：资产处理服务（EXIF 提取、文件哈希、文件夹管理）
+  - `gemini.py`：Gemini AI 服务封装
+  - `storage.py`：MinIO 存储服务（上传、下载、缩略图生成）
+  - `vector.py`：Qdrant 向量检索服务
+  - `stats.py`：统计数据服务
+- **数据模型**（`src/models`）：SQLAlchemy ORM 模型定义
+- **数据验证**（`src/schemas`）：Pydantic 数据验证模型
+
+#### 4.3.3 Worker 模块（`apps/worker`）
+
+**职责**：后台异步任务处理、定时任务调度
+
+**核心功能**：
+- **资产处理任务**（`tasks/process_asset.py`）：
+  - 缩略图生成
+  - EXIF 信息提取
+  - AI 图片分析
+  - 向量嵌入生成
+- **定时任务**（`tasks/schedulers.py`）：
+  - 每 6 小时扫描新资产
+  - AI 相册建议生成
+  - 清理过期分享链接
+
+#### 4.3.4 数据存储模块
+
+**PostgreSQL**：关系型数据存储
+- 用户、资产、相册、标签等结构化数据
+- 支持事务、外键约束、索引优化
+
+**Qdrant**：向量数据库
+- 存储资产向量嵌入（768 维）
+- 支持语义搜索、相似度检索
+
+**Redis**：缓存和队列
+- 缓存热点数据
+- 任务队列管理（可选）
+
+**MinIO**：对象存储
+- 原始文件存储
+- 缩略图存储
+- 编辑版本存储
 
 ---
 
@@ -2151,7 +2226,28 @@ sequenceDiagram
 ### 5.3 EXIF 信息提取与自动分类
 
 #### 5.3.1 功能描述
-[待展开]
+
+EXIF（Exchangeable Image File Format）是嵌入在数字照片中的元数据标准，包含拍摄时间、相机参数、GPS 位置等丰富信息。Zmage 实现了完整的 EXIF 信息提取和基于 EXIF 的自动分类标签生成功能。
+
+**核心功能**：
+- **EXIF 数据提取**：自动从图片文件中提取所有可用的 EXIF 信息
+- **时间信息解析**：提取拍摄时间（`DateTimeOriginal`），用于时间线排序和筛选
+- **GPS 位置提取**：解析 GPS 坐标，支持度分秒格式转换
+- **相机参数提取**：获取相机型号、ISO、光圈、快门速度、焦距等
+- **自动标签生成**：基于 EXIF 信息自动生成分类标签（时间标签、设备标签、尺寸标签、位置标签）
+- **地图集成**：GPS 坐标可用于地图视图展示
+
+**支持的 EXIF 字段**：
+- `DateTimeOriginal`：拍摄时间
+- `GPS GPSLatitude/GPSLongitude`：GPS 坐标
+- `Image Model`：相机型号
+- `Image Make`：相机厂商
+- `EXIF ISOSpeedRatings`：ISO 感光度
+- `EXIF FocalLength`：焦距
+- `EXIF ExposureTime`：快门速度
+- 其他扩展字段存储在 `exif_data` JSON 字段中
+
+**实现状态**：✅ 已完成，使用 `exifread` 库进行 EXIF 解析，支持 JPEG、HEIF/HEIC 等格式
 
 #### 5.3.2 EXIF 信息提取实现
 
@@ -2275,7 +2371,28 @@ async def list_map_assets(...):
 ### 5.4 自定义标签系统
 
 #### 5.4.1 功能描述
-[待展开]
+
+标签系统是资产分类和检索的核心功能。Zmage 实现了灵活的自定义标签系统，支持用户手动添加标签、自动标签（EXIF 和 AI 生成）、标签搜索和筛选。
+
+**核心功能**：
+- **手动标签添加**：用户可以为任意资产添加自定义标签
+- **批量标签操作**：支持为多个资产同时添加/删除标签
+- **标签搜索**：基于标签快速筛选和检索资产
+- **自动标签生成**：
+  - EXIF 自动标签：时间（如"2024年"、"12月"）、设备（相机型号）、尺寸（如"1920x1080"）
+  - AI 自动标签：物体、场景、情感、风格等语义标签
+- **标签存储**：使用 PostgreSQL 数组类型（`tags TEXT[]`）存储，支持 GIN 索引快速检索
+- **标签管理**：标签列表查看、常用标签统计、热门标签推荐
+
+**标签类型**：
+- **时间标签**：基于 `taken_at` 自动生成（如"2024年"、"12月"、"冬季"）
+- **设备标签**：基于 `camera_model` 生成（如"iPhone 14 Pro"、"Canon EOS 5D"）
+- **尺寸标签**：基于 `width/height` 生成（如"1920x1080"、"4K"）
+- **位置标签**：基于 GPS 信息生成（如"有地理信息"）
+- **AI 语义标签**：物体、场景、情感、风格等（如"海边"、"日落"、"温暖"）
+- **用户自定义标签**：用户手动添加的任意标签
+
+**实现状态**：✅ 已完成，标签存储在 `assets.tags` 数组字段，支持 PostgreSQL GIN 索引快速查询
 
 #### 5.4.2 实现方案
 - **标签创建**：用户手动添加标签
@@ -3075,34 +3192,550 @@ sequenceDiagram
 ### 7.1 前端技术实现
 
 #### 7.1.1 Next.js App Router
-[待展开：路由设计、Server Components 使用]
+
+**路由设计**：
+
+Zmage 采用 Next.js 16 App Router 的文件系统路由，所有路由定义在 `apps/web/src/app` 目录下：
+
+- **`/`**（`page.tsx`）：首页，资产网格/列表展示，支持搜索、筛选、批量操作
+- **`/login`**（`login/page.tsx`）：用户登录页面
+- **`/albums`**（`albums/page.tsx`）：相册列表页面
+- **`/albums/[id]`**：相册详情页面
+- **`/map`**（`map/page.tsx`）：足迹地图页面
+- **`/settings`**（`settings/page.tsx`）：系统设置页面
+- **`/account`**（`account/page.tsx`）：账户管理页面
+
+**Server Components 使用**：
+
+由于 Zmage 是客户端应用，主要使用 Client Components（`"use client"`），但通过 Next.js 的代理功能实现 API 路由：
+
+- **`next.config.js`** 配置了 API 代理：客户端请求 `/api/*` 自动转发到后端服务
+- **数据获取**：使用 TanStack Query 在客户端获取数据，实现服务端状态管理
+
+**关键特性**：
+- 支持动态路由（`[id]`）
+- 支持搜索参数（`?type=image&q=search`）
+- 自动代码分割和懒加载
 
 #### 7.1.2 状态管理（Zustand）
-[待展开：全局状态设计]
+
+**全局状态设计**：
+
+使用 Zustand 管理应用全局状态，定义在 `apps/web/src/store/index.ts`：
+
+```typescript
+interface AppState {
+  // 选中的资产
+  selectedAssets: number[];
+  setSelectedAssets: (ids: number[]) => void;
+  toggleAssetSelection: (id: number) => void;
+  clearSelection: () => void;
+  selectAll: (ids: number[]) => void;
+  
+  // 搜索状态
+  searchQuery: string;
+  setSearchQuery: (query: string) => void;
+  aiSearchEnabled: boolean;
+  setAiSearchEnabled: (enabled: boolean) => void;
+  
+  // 视图模式
+  viewMode: "grid" | "list";
+  setViewMode: (mode: "grid" | "list") => void;
+  
+  // 当前文件夹
+  currentFolderId: number | null;
+  setCurrentFolderId: (id: number | null) => void;
+  
+  // 侧边栏
+  sidebarOpen: boolean;
+  setSidebarOpen: (open: boolean) => void;
+  toggleSidebar: () => void;
+  
+  // 上传状态
+  uploadProgress: Record<string, number>;
+  setUploadProgress: (fileId: string, progress: number) => void;
+  
+  // 详情面板
+  detailAssetId: number | null;
+  setDetailAssetId: (id: number | null) => void;
+  
+  // 批量操作
+  batchMode: boolean;
+  setBatchMode: (mode: boolean) => void;
+}
+```
+
+**优势**：
+- 轻量级，无需 Provider 包装
+- TypeScript 类型安全
+- 支持选择器优化性能（`useSelectedAssets` hook）
 
 #### 7.1.3 UI 组件库（shadcn/ui）
-[待展开：组件使用情况]
+
+**组件使用情况**：
+
+基于 shadcn/ui 和 Tailwind CSS 构建，组件位于 `apps/web/src/components/ui/`：
+
+**核心组件**：
+- **`Button`**：按钮组件，支持多种变体（primary、secondary、ghost）
+- **`Modal`**：模态对话框（用于确认、编辑等）
+- **`Input`**：输入框组件
+- **`Badge`**：标签徽章组件
+- **`Card`**：卡片容器组件
+- **`Dropdown`**：下拉菜单组件
+- **`Skeleton`**：加载骨架屏组件
+- **`Slider`**：滑块组件（用于编辑器的亮度、对比度等）
+
+**自定义组件**：
+- **`AssetGrid`**：资产网格布局
+- **`AssetCard`**：资产卡片组件
+- **`AssetEditor`**：图片编辑器组件
+- **`UploadModal`**：上传模态框
+- **`Sidebar`**：侧边栏导航
+- **`Header`**：顶部工具栏
+
+**设计特色**：
+- 液态玻璃 UI 效果（backdrop-filter、透明背景）
+- 流畅的动画过渡（Framer Motion）
+- 响应式设计（Tailwind 断点）
 
 #### 7.1.4 数据获取（TanStack Query）
-[待展开：API 调用封装、缓存策略]
+
+**API 调用封装**：
+
+API 客户端定义在 `apps/web/src/lib/api.ts`，使用 Axios：
+
+```typescript
+const api = axios.create({
+  baseURL: `${API_BASE_URL}/api`,
+  timeout: 60000,
+  headers: { "Content-Type": "application/json" },
+});
+
+// 请求拦截器：注入 Token
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem("zmage_token");
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// 响应拦截器：处理 401 错误
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem("zmage_token");
+      window.location.href = "/login";
+    }
+    return Promise.reject(error);
+  }
+);
+```
+
+**缓存策略**：
+
+在 `apps/web/src/lib/providers.tsx` 中配置 QueryClient：
+
+```typescript
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 60 * 1000, // 1 分钟
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+```
+
+**使用示例**：
+
+```typescript
+// 获取资产列表
+const { data: assets, isLoading } = useQuery({
+  queryKey: ["assets", folderId, searchQuery],
+  queryFn: () => assetsApi.list({ folder_id: folderId, q: searchQuery }),
+});
+
+// 上传资产
+const uploadMutation = useMutation({
+  mutationFn: (file: File) => assetsApi.upload(file),
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: ["assets"] });
+  },
+});
+```
+
+**优势**：
+- 自动缓存管理
+- 请求去重
+- 后台自动刷新
+- 乐观更新支持
 
 ### 7.2 后端技术实现
 
 #### 7.2.1 FastAPI 框架
-[待展开：路由设计、中间件、依赖注入]
+
+**路由设计**：
+
+路由模块化组织在 `apps/api/src/routers/`，每个模块独立的路由文件：
+
+- **`auth.py`**：认证路由（`/api/auth/register`、`/api/auth/login`）
+- **`assets.py`**：资产管理路由（`/api/assets/*`）
+- **`albums.py`**：相册管理路由（`/api/albums/*`）
+- **`ai.py`**：AI 功能路由（`/api/ai/chat`、`/api/ai/analyze`）
+- **`mcp.py`**：MCP 工具路由（`/api/mcp/tools`、`/api/mcp/call`）
+- **`batch.py`**：批量操作路由（`/api/assets/batch/*`）
+
+在 `main.py` 中统一注册：
+
+```python
+app.include_router(assets_router, prefix="/api", dependencies=[Depends(get_current_user)])
+app.include_router(albums_router, prefix="/api", dependencies=[Depends(get_current_user)])
+# ... 其他路由
+```
+
+**中间件**：
+
+在 `main.py` 中配置：
+
+1. **CORS 中间件**：允许跨域请求
+```python
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
+
+2. **GZip 压缩中间件**：压缩响应数据
+```python
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+```
+
+3. **请求日志中间件**：记录请求耗时
+```python
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    response = await call_next(request)
+    process_time = (time.time() - start_time) * 1000
+    logger.info(f"{request.method} {request.url.path} {response.status_code} {process_time:.2f}ms")
+    return response
+```
+
+**依赖注入**：
+
+FastAPI 的依赖注入系统用于：
+- **数据库会话**：`get_db` 提供 AsyncSession
+- **当前用户**：`get_current_user` 从 JWT Token 解析用户
+- **后台任务**：`BackgroundTasks` 用于异步任务
+
+```python
+async def upload_asset(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    background_tasks: BackgroundTasks,
+):
+    # 处理上传
+```
 
 #### 7.2.2 异步编程
-[待展开：AsyncIO 使用、数据库异步操作]
+
+**AsyncIO 使用**：
+
+所有路由和处理函数使用 `async/await`：
+
+```python
+@router.get("/assets")
+async def list_assets(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(select(Asset).where(Asset.user_id == current_user.id))
+    assets = result.scalars().all()
+    return assets
+```
+
+**数据库异步操作**：
+
+使用 SQLAlchemy 2.0 异步 API：
+
+```python
+# 查询
+result = await db.execute(select(Asset).where(Asset.id == asset_id))
+asset = result.scalar_one_or_none()
+
+# 创建
+db.add(new_asset)
+await db.commit()
+await db.refresh(new_asset)
+
+# 更新
+asset.title = "新标题"
+await db.commit()
+
+# 删除（软删除）
+asset.deleted_at = datetime.utcnow()
+await db.commit()
+```
+
+**异步文件处理**：
+
+使用 `run_in_threadpool` 将同步的 I/O 操作（如图片处理）放到线程池：
+
+```python
+from fastapi.concurrency import run_in_threadpool
+
+async def generate_thumbnail(image_data: bytes) -> bytes:
+    def _generate():
+        img = Image.open(io.BytesIO(image_data))
+        img.thumbnail((400, 400))
+        # ... 处理
+        return output.getvalue()
+    return await run_in_threadpool(_generate)
+```
 
 #### 7.2.3 认证与授权
-[待展开：JWT 实现、权限控制]
+
+**JWT 实现**：
+
+在 `apps/api/src/utils/security.py` 中实现：
+
+1. **Token 生成**：
+```python
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.now(timezone.utc) + expires_delta
+    else:
+        expire = datetime.now(timezone.utc) + timedelta(minutes=10080)  # 7天
+    
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, settings.jwt_secret, algorithm="HS256")
+    return encoded_jwt
+```
+
+2. **Token 验证**：
+```python
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    
+    result = await db.execute(select(User).where(User.username == username))
+    user = result.scalar_one_or_none()
+    
+    if user is None or not user.is_active:
+        raise credentials_exception
+        
+    return user
+```
+
+**密码哈希**：
+
+使用 `passlib` 的 `pbkdf2_sha256`：
+
+```python
+pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password: str) -> str:
+    return pwd_context.hash(password)
+```
+
+**权限控制**：
+
+- **路由级别**：通过 `dependencies=[Depends(get_current_user)]` 要求登录
+- **资源级别**：检查 `asset.user_id == current_user.id` 确保用户只能访问自己的资源
+- **角色控制**：支持 `is_superuser` 字段（未来扩展）
 
 #### 7.2.4 任务队列
-[待展开：Redis 队列、后台任务处理]
+
+**后台任务处理**：
+
+Zmage 使用两种方式处理异步任务：
+
+1. **FastAPI BackgroundTasks**（轻量级任务）：
+```python
+@router.post("/assets/upload")
+async def upload_asset(
+    file: UploadFile,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+):
+    asset = await create_asset(...)
+    background_tasks.add_task(process_asset, asset.id)
+    return asset
+```
+
+2. **独立 Worker 服务**（重量级任务）：
+   - Worker 服务（`apps/worker`）定期扫描待处理的资产
+   - 处理缩略图生成、EXIF 提取、AI 分析、向量生成等
+   - 使用 APScheduler 调度定时任务
+
+**任务状态跟踪**：
+
+资产表包含 `status` 和 `processing_step` 字段：
+- `status`: `pending` → `processing` → `ready` / `failed`
+- `processing_step`: `thumbnail` → `metadata` → `ai_analysis` → `vector` → `completed`
+
+**Redis 使用**（可选）：
+- 当前实现主要使用数据库状态跟踪
+- Redis 可用于缓存热点数据和未来扩展的消息队列
 
 ### 7.3 数据库设计
 
-[待展开：详细表结构设计]
+#### 7.3.1 核心表结构
+
+**users（用户表）**：
+
+| 字段名 | 类型 | 约束 | 说明 |
+|--------|------|------|------|
+| `id` | SERIAL | PRIMARY KEY | 用户ID |
+| `username` | VARCHAR(100) | UNIQUE, NOT NULL | 用户名（>=6字符） |
+| `email` | VARCHAR(255) | UNIQUE, NOT NULL | 邮箱 |
+| `hashed_password` | VARCHAR(255) | NOT NULL | 密码哈希 |
+| `full_name` | VARCHAR(100) | NULL | 全名 |
+| `is_active` | BOOLEAN | DEFAULT TRUE | 是否激活 |
+| `is_superuser` | BOOLEAN | DEFAULT FALSE | 是否超级用户 |
+| `vault_pin_hash` | VARCHAR(255) | NULL | 保险库PIN哈希 |
+| `created_at` | TIMESTAMP | DEFAULT NOW() | 创建时间 |
+| `updated_at` | TIMESTAMP | DEFAULT NOW() | 更新时间 |
+
+**assets（资产表）**：
+
+| 字段名 | 类型 | 说明 |
+|--------|------|------|
+| `id` | SERIAL | 资产ID |
+| `user_id` | INTEGER | FK → users.id (CASCADE) |
+| `filename` | VARCHAR(255) | 存储文件名 |
+| `original_filename` | VARCHAR(255) | 原始文件名 |
+| `file_path` | VARCHAR(512) | MinIO存储路径 |
+| `thumbnail_path` | VARCHAR(512) | 缩略图路径 |
+| `file_size` | INTEGER | 文件大小（字节） |
+| `file_hash` | VARCHAR(64) | SHA256哈希（UNIQUE） |
+| `mime_type` | VARCHAR(100) | MIME类型 |
+| `asset_type` | ENUM | image/video/document/other |
+| `width` / `height` | INTEGER | 图片尺寸 |
+| `duration` | FLOAT | 视频时长（秒） |
+| `title` | VARCHAR(255) | AI生成标题 |
+| `description` | TEXT | AI生成描述 |
+| `tags` | TEXT[] | 标签数组 |
+| `ocr_text` | TEXT | OCR提取文字 |
+| `exif_data` | JSONB | EXIF元数据 |
+| `taken_at` | TIMESTAMP | 拍摄时间 |
+| `camera_model` | VARCHAR(100) | 相机型号 |
+| `location` | VARCHAR(255) | 位置描述 |
+| `latitude` / `longitude` | FLOAT | GPS坐标 |
+| `custom_fields` | JSONB | 自定义字段值 |
+| `status` | VARCHAR(32) | pending/processing/ready/failed |
+| `processing_step` | VARCHAR(32) | 处理步骤 |
+| `error_message` | TEXT | 错误信息 |
+| `folder_id` | INTEGER | FK → folders.id |
+| `vector_id` | VARCHAR(64) | Qdrant向量ID |
+| `deleted_at` | TIMESTAMP | 软删除时间 |
+| `is_private` | BOOLEAN | 是否私密（保险库） |
+| `created_at` / `updated_at` | TIMESTAMP | 时间戳 |
+
+**albums（相册表）**：
+
+| 字段名 | 类型 | 说明 |
+|--------|------|------|
+| `id` | SERIAL | 相册ID |
+| `user_id` | INTEGER | FK → users.id |
+| `name` | VARCHAR(255) | 相册名称 |
+| `description` | TEXT | 相册描述 |
+| `cover_asset_id` | INTEGER | FK → assets.id（封面） |
+| `album_type` | VARCHAR(32) | manual/smart/ai_suggested |
+| `status` | VARCHAR(32) | active/pending/ignored |
+| `smart_rules` | JSONB | 智能相册规则 |
+| `suggestion_reason` | TEXT | AI建议理由 |
+| `suggestion_score` | FLOAT | 建议置信度 |
+| `created_at` / `updated_at` | TIMESTAMP | 时间戳 |
+
+**album_assets（相册-资产关联表）**：
+
+| 字段名 | 类型 | 说明 |
+|--------|------|------|
+| `album_id` | INTEGER | FK → albums.id |
+| `asset_id` | INTEGER | FK → assets.id |
+| `added_at` | TIMESTAMP | 添加时间 |
+| PRIMARY KEY (`album_id`, `asset_id`) | | |
+
+**folders（文件夹表）**：
+
+| 字段名 | 类型 | 说明 |
+|--------|------|------|
+| `id` | SERIAL | 文件夹ID |
+| `user_id` | INTEGER | FK → users.id |
+| `name` | VARCHAR(255) | 文件夹名称 |
+| `path` | VARCHAR(512) | 完整路径 |
+| `parent_id` | INTEGER | FK → folders.id（父文件夹） |
+| `created_at` / `updated_at` | TIMESTAMP | 时间戳 |
+
+**shares（分享表）**：
+
+| 字段名 | 类型 | 说明 |
+|--------|------|------|
+| `id` | SERIAL | 分享ID |
+| `user_id` | INTEGER | FK → users.id |
+| `token` | VARCHAR(64) | UNIQUE 分享令牌 |
+| `asset_id` | INTEGER | FK → assets.id（可选） |
+| `collection_id` | INTEGER | FK → collections.id（可选） |
+| `password_hash` | VARCHAR(255) | 访问密码哈希 |
+| `expires_at` | TIMESTAMP | 过期时间 |
+| `access_count` | INTEGER | 访问次数 |
+| `created_at` | TIMESTAMP | 创建时间 |
+
+#### 7.3.2 索引设计
+
+**主键索引**：所有表的 `id` 字段自动创建 PRIMARY KEY 索引
+
+**唯一索引**：
+- `users.username`
+- `users.email`
+- `assets.file_hash`（防止重复上传）
+
+**外键索引**：
+- `assets.user_id`
+- `assets.folder_id`
+- `albums.user_id`
+- `folders.user_id`
+
+**查询索引**：
+- `assets.status`（快速查询待处理资产）
+- `assets.asset_type`（按类型筛选）
+- `assets.created_at DESC`（时间排序）
+- `assets.tags USING GIN`（标签数组索引）
+- `folders.path`（路径查询）
+
+#### 7.3.3 数据迁移
+
+**初始化脚本**：`apps/api/src/migrations/init.sql`
+
+- 创建所有表结构
+- 创建索引
+- 设置默认值
+
+**迁移工具**：`apps/api/src/migrations/migrate.py`
+
+- 自动读取并执行 SQL 脚本
+- 验证表创建成功
+- 支持增量迁移
 
 ### 7.4 向量检索实现
 
@@ -3118,7 +3751,121 @@ sequenceDiagram
 ### 7.5 对象存储实现
 
 #### 7.5.1 MinIO 集成
-[待展开]
+
+**MinIO 客户端配置**：
+
+在 `apps/api/src/services/storage.py` 中使用 `boto3` 客户端：
+
+```python
+import boto3
+from botocore.config import Config
+
+class StorageService:
+    def __init__(self):
+        self.client = boto3.client(
+            "s3",
+            endpoint_url=settings.s3_endpoint,  # http://img-lib-minio:9000
+            aws_access_key_id=settings.s3_access_key,
+            aws_secret_access_key=settings.s3_secret_key,
+            config=Config(signature_version="s3v4"),
+        )
+        self.bucket = settings.s3_bucket  # "zmage"
+```
+
+**核心操作**：
+
+1. **桶初始化**：
+```python
+async def init_bucket(self):
+    def _init():
+        try:
+            self.client.head_bucket(Bucket=self.bucket)
+        except Exception:
+            self.client.create_bucket(Bucket=self.bucket)
+    await run_in_threadpool(_init)
+```
+
+2. **文件上传**：
+```python
+async def upload_file(
+    self,
+    file_data: BinaryIO,
+    file_path: str,
+    content_type: str = "application/octet-stream",
+) -> str:
+    await run_in_threadpool(
+        self.client.upload_fileobj,
+        file_data,
+        self.bucket,
+        file_path,
+        ExtraArgs={"ContentType": content_type},
+    )
+    return file_path
+```
+
+3. **文件下载**：
+```python
+async def download_file(self, file_path: str) -> bytes:
+    response = await run_in_threadpool(
+        self.client.get_object, Bucket=self.bucket, Key=file_path
+    )
+    return await run_in_threadpool(response["Body"].read)
+```
+
+4. **生成预签名 URL**（用于前端直接访问）：
+```python
+def get_presigned_url(self, file_path: str, expires_in: int = 3600) -> str:
+    return self.client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": self.bucket, "Key": file_path},
+        ExpiresIn=expires_in,
+    )
+```
+
+**存储路径规范**：
+
+- **原始文件**：`assets/{YYYYMMDD}_{hash}_{filename}`
+- **缩略图**：`thumbnails/{asset_id}.jpg`
+- **编辑版本**：`versions/{version_id}.jpg`
+
+**缩略图生成**：
+
+图片缩略图（400x400，JPEG，quality=85）：
+```python
+async def generate_thumbnail(
+    self,
+    image_data: bytes,
+    max_size: tuple = (400, 400),
+    quality: int = 85,
+) -> bytes:
+    def _generate():
+        img = Image.open(io.BytesIO(image_data))
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+        img.thumbnail(max_size, Image.Resampling.LANCZOS)
+        output = io.BytesIO()
+        img.save(output, format="JPEG", quality=quality, optimize=True)
+        return output.getvalue()
+    return await run_in_threadpool(_generate)
+```
+
+视频封面（提取第1秒帧）：
+```python
+async def generate_video_thumbnail(self, video_path: str) -> bytes:
+    def _generate():
+        cap = cv2.VideoCapture(video_path)
+        cap.set(cv2.CAP_PROP_POS_MSEC, 1000)  # 跳到第1秒
+        ret, frame = cap.read()
+        cap.release()
+        if ret:
+            img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            img.thumbnail((400, 400))
+            output = io.BytesIO()
+            img.save(output, format="JPEG", quality=85)
+            return output.getvalue()
+        return None
+    return await run_in_threadpool(_generate)
+```
 
 #### 7.5.2 存储策略
 - 原始文件：`assets/{timestamp}_{hash}_{filename}`
@@ -3379,33 +4126,44 @@ Zmage 采用**液态玻璃（Liquid Glass）**设计风格，创造现代、优�
 **设计特征**：
 
 ```mermaid
-mindmap
-  root((液态玻璃风格))
-    视觉效果
-      backdrop-blur
-        毛玻璃模糊效果
-        半透明背景
-      半透明面板
-        bg-opacity
-        rgba透明度
-      细边框
-        微弱边框
-        border-1px
-      微弱高光
-        shadow效果
-        glow效果
-    色彩系统
-      主色调
-        蓝色系渐变
-        #3b82f6到#8b5cf6
-      背景
-        深色模式
-        浅色渐变+噪点
-    圆角设计
-      统一圆角
-      12-16px
-      卡片圆角
-      更大圆角
+graph TD
+  R["液态玻璃风格"]
+
+  %% 视觉效果
+  R --> A["视觉效果"]
+  A --> A1["Backdrop Blur"]
+  A1 --> A11["毛玻璃模糊效果"]
+  A1 --> A12["半透明背景"]
+
+  A --> A2["半透明面板"]
+  A2 --> A21["bg-opacity"]
+  A2 --> A22["RGBA 透明度"]
+
+  A --> A3["细边框"]
+  A3 --> A31["微弱边框"]
+  A3 --> A32["1px Border"]
+
+  A --> A4["微弱高光"]
+  A4 --> A41["Shadow 效果"]
+  A4 --> A42["Glow 效果"]
+
+  %% 色彩系统
+  R --> B["色彩系统"]
+  B --> B1["主色调"]
+  B1 --> B11["蓝色系渐变"]
+  B1 --> B12["#3b82f6 → #8b5cf6"]
+
+  B --> B2["背景"]
+  B2 --> B21["深色模式"]
+  B2 --> B22["浅色渐变 + 噪点"]
+
+  %% 圆角设计
+  R --> C["圆角设计"]
+  C --> C1["统一圆角"]
+  C1 --> C11["12–16px"]
+
+  C --> C2["卡片圆角"]
+  C2 --> C21["更大圆角"]
 ```
 
 **实现方式**：
@@ -3842,29 +4600,311 @@ graph TB
 ### 11.1 Gemini AI 集成
 
 #### 11.1.1 API 调用封装
-[待展开]
+
+**Gemini 客户端初始化**：
+
+在 `apps/api/src/services/gemini.py` 中封装 Gemini 服务：
+
+```python
+from google import genai
+
+class GeminiService:
+    def __init__(self):
+        self.api_key = settings.gemini_api_key
+        self._client = None
+    
+    @property
+    def client(self):
+        """延迟初始化客户端"""
+        if not self.api_key:
+            return None
+        if self._client is None:
+            self._client = genai.Client(api_key=self.api_key)
+        return self._client
+```
+
+**图片分析 API**：
+
+使用 `gemini-2.5-flash` 模型进行多模态分析：
+
+```python
+async def analyze_image(self, image_data: bytes, mime_type: str = "image/jpeg") -> Dict[str, Any]:
+    response = self.client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[
+            types.Content(
+                parts=[
+                    types.Part(inline_data=types.Blob(mime_type=mime_type, data=image_data)),
+                    types.Part(text=prompt)
+                ]
+            )
+        ]
+    )
+    # 解析 JSON 响应
+    result = json.loads(response.text.strip())
+    return result
+```
+
+**向量嵌入 API**：
+
+使用 `gemini-embedding-001` 生成 768 维向量：
+
+```python
+async def generate_embedding(self, text: str, task_type: str = "RETRIEVAL_DOCUMENT") -> List[float]:
+    result = self.client.models.embed_content(
+        model="gemini-embedding-001",
+        contents=text,
+        config=types.EmbedContentConfig(
+            output_dimensionality=768,
+            task_type=task_type,
+        ),
+    )
+    vec = np.array(result.embeddings[0].values, dtype=np.float32)
+    vec = vec / (np.linalg.norm(vec) + 1e-12)  # L2归一化
+    return vec.tolist()
+```
 
 #### 11.1.2 错误处理与重试
-[待展开]
+
+**错误处理策略**：
+
+1. **API 调用失败**：捕获异常，返回默认值
+```python
+try:
+    response = self.client.models.generate_content(...)
+    result = json.loads(response.text)
+except Exception as e:
+    logger.error(f"Gemini 图片分析失败: {e}")
+    return {
+        "title": "",
+        "description": "",
+        "tags": [],
+        # ... 默认值
+    }
+```
+
+2. **JSON 解析失败**：移除 markdown 代码块标记后重试
+```python
+text = response.text.strip()
+if text.startswith("```json"):
+    text = text[7:]
+elif text.startswith("```"):
+    text = text[3:]
+if text.endswith("```"):
+    text = text[:-3]
+result = json.loads(text.strip())
+```
+
+3. **服务不可用**：检查 API Key，返回提示信息
+```python
+if not self.client:
+    return {
+        "title": "图片资产",
+        "description": "由于未配置 AI 服务，暂无详细描述。",
+        "tags": ["未分析"],
+    }
+```
+
+**重试机制**（未来扩展）：
+- 使用 `tenacity` 库实现指数退避重试
+- 针对网络错误和限流错误分别处理
 
 #### 11.1.3 成本控制
-[待展开]
+
+**API 使用优化**：
+
+1. **模型选择**：
+   - 图片分析：`gemini-2.5-flash`（快速、成本较低）
+   - 向量嵌入：`gemini-embedding-001`（专为检索优化）
+
+2. **批量处理**：
+   - Worker 服务批量处理待分析资产
+   - 避免频繁的 API 调用
+
+3. **缓存策略**：
+   - 已分析的资产不再重复分析
+   - 向量嵌入结果存储在 Qdrant
+
+4. **请求优化**：
+   - 仅对图片类型资产进行 AI 分析
+   - 视频分析可选（成本较高）
+
+**成本监控**（建议）：
+- 统计每日 API 调用次数
+- 设置预算告警
+- 记录每次调用的 token 消耗
 
 ### 11.2 图片分析流程
 
-[待展开：流程图 + 说明]
+**完整流程图**：
+
+```mermaid
+sequenceDiagram
+    participant W as Worker
+    participant S as StorageService
+    participant G as GeminiService
+    participant AI as Gemini API
+    participant DB as 数据库
+    participant V as VectorService
+    participant Q as Qdrant
+
+    W->>W: 接收资产处理任务
+    W->>DB: 更新 status=processing, step=ai_analysis
+    
+    W->>S: download_file(asset.file_path)
+    S-->>W: 返回图片二进制数据
+    
+    W->>G: analyze_image(image_data)
+    G->>AI: POST /generateContent<br/>model: gemini-2.5-flash<br/>多模态输入
+    AI-->>G: JSON响应<br/>{title, description, tags, ocr_text, objects, scene, colors}
+    
+    G->>G: 解析JSON<br/>移除markdown标记
+    G-->>W: 返回结构化结果
+    
+    W->>DB: 更新资产记录<br/>title/description/tags/ocr_text/objects/scene/colors
+    W->>DB: 更新 status=ready, step=completed
+    
+    W->>G: generate_embedding(description)
+    G->>AI: POST /embedContent<br/>model: gemini-embedding-001<br/>768维向量
+    AI-->>G: 向量数据
+    
+    G->>G: 归一化向量<br/>L2归一化
+    G-->>W: 返回768维向量
+    
+    W->>V: upsert_vector(asset_id, vector, metadata)
+    V->>Q: 存储向量到Qdrant
+    Q-->>V: 返回向量ID
+    
+    V->>DB: 更新 asset.vector_id
+    V-->>W: 处理完成
+```
+
+**分析结果结构**：
+
+```json
+{
+  "title": "海边日落",
+  "description": "这是一张拍摄于傍晚的海边照片，夕阳西下，天空呈现出温暖的橙红色调，海浪轻拍着沙滩。",
+  "tags": ["海边", "日落", "夕阳", "海滩", "温暖色调"],
+  "ocr_text": "",
+  "objects": ["海浪", "沙滩", "天空"],
+  "scene": "户外自然",
+  "colors": ["橙色", "红色", "蓝色"]
+}
+```
 
 ### 11.3 向量化流程
 
-[待展开]
+**向量生成流程**：
+
+1. **文本准备**：
+   - 使用资产描述（`description`）作为主要文本
+   - 合并标题、标签、OCR 文本增强语义
+
+2. **向量生成**：
+   - 调用 `gemini-embedding-001` 生成 768 维向量
+   - 使用 `RETRIEVAL_DOCUMENT` 任务类型（适合文档嵌入）
+   - L2 归一化确保向量长度一致
+
+3. **向量存储**：
+   - 存储到 Qdrant 向量数据库
+   - 元数据包含：`asset_id`、`title`、`tags`、`asset_type`
+
+**向量索引**：
+
+- **算法**：HNSW (Hierarchical Navigable Small World)
+- **距离度量**：余弦相似度（归一化后的向量）
+- **参数**：`m=16`（每个节点的连接数），`ef_construction=200`
 
 ### 11.4 语义搜索实现
 
-[待展开]
+**搜索流程**：
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant F as 前端
+    participant API as FastAPI
+    participant G as GeminiService
+    participant V as VectorService
+    participant Q as Qdrant
+    participant DB as 数据库
+
+    U->>F: 输入查询 "海边的照片"
+    F->>API: POST /api/assets/search<br/>q="海边的照片", ai_search=true
+    
+    API->>G: generate_query_embedding("海边的照片")
+    G->>G: 调用 gemini-embedding-001<br/>task_type=RETRIEVAL_QUERY
+    G-->>API: 返回查询向量
+    
+    API->>V: search_vectors(query_vector, limit=20)
+    V->>Q: 向量相似度搜索<br/>cosine similarity
+    Q-->>V: 返回相似资产ID列表 + 相似度分数
+    
+    V->>DB: 根据asset_id查询资产详情
+    DB-->>V: 返回资产列表
+    
+    V->>V: 按相似度分数排序
+    V-->>API: 返回排序后的资产列表
+    
+    API-->>F: 返回搜索结果
+    F-->>U: 展示结果
+```
+
+**混合搜索**：
+
+结合关键词过滤和向量搜索：
+
+1. **关键词过滤**：在 PostgreSQL 中使用 `ILIKE` 或全文索引过滤
+2. **向量搜索**：在 Qdrant 中检索相似向量
+3. **结果合并**：取交集或并集，按相关性排序
 
 ### 11.5 以图搜图实现
 
-[待展开]
+**实现原理**：
+
+1. **查询图片分析**：
+   - 用户上传查询图片
+   - 调用 AI 分析生成描述和向量
+
+2. **向量相似度搜索**：
+   - 使用查询图片的向量在 Qdrant 中搜索
+   - 返回相似度最高的资产
+
+**流程**：
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant F as 前端
+    participant API as FastAPI
+    participant G as GeminiService
+    participant V as VectorService
+    participant Q as Qdrant
+
+    U->>F: 上传查询图片
+    F->>API: POST /api/assets/search/similar<br/>form-data: image
+    
+    API->>G: analyze_image(query_image)
+    G-->>API: 返回描述和标签
+    
+    API->>G: generate_embedding(description)
+    G-->>API: 返回查询向量
+    
+    API->>V: search_vectors(query_vector, limit=10)
+    V->>Q: 向量相似度搜索
+    Q-->>V: 返回相似资产ID + 相似度
+    
+    V-->>API: 返回相似资产列表
+    API-->>F: 返回结果
+    F-->>U: 展示相似图片
+```
+
+**相似度阈值**：
+
+- 余弦相似度 > 0.7：高度相似
+- 余弦相似度 > 0.5：中等相似
+- 余弦相似度 < 0.5：相似度较低，不返回
 
 ---
 
